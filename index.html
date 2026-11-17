@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Anjo da Guarda</title>
+<style>
+  :root { --bg:#0b0f14; --fg:#e8eef5; --ok:#22c55e; --alert:#ef4444; --muted:#8a96a3; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,sans-serif; }
+  header { padding:12px 16px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  h1 { font-size:18px; margin:0; }
+  #status { font-size:13px; color:var(--muted); }
+  #stage { position:relative; width:100%; max-width:960px; margin:0 auto; }
+  video, canvas { width:100%; display:block; }
+  canvas { position:absolute; inset:0; }
+  #painel { padding:10px 16px; display:flex; flex-wrap:wrap; gap:16px; font-size:15px; }
+  #alerta { margin:0 16px; padding:10px 12px; border-radius:8px; background:var(--alert); font-weight:700; display:none; }
+  .controles { padding:10px 16px 24px; display:flex; flex-wrap:wrap; gap:8px; }
+  button { background:#1f2937; color:var(--fg); border:1px solid #374151; border-radius:8px; padding:10px 14px; font-size:15px; }
+  button.primary { background:var(--ok); color:#06210f; border:none; font-weight:700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Anjo da Guarda · Teste 1</h1>
+  <span id="status">Carregando modelo…</span>
+</header>
+
+<div id="stage">
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<div id="painel">
+  <span>Pessoas: <b id="pessoas">0</b></span>
+  <span>Veículos: <b id="veiculos">0</b></span>
+  <span>FPS: <b id="fps">0</b></span>
+</div>
+<div id="alerta"></div>
+
+<div class="controles">
+  <button id="iniciar" class="primary" disabled>Iniciar câmera</button>
+  <button id="trocar">Trocar câmera</button>
+  <button id="parar">Parar</button>
+  <button id="baixar">Baixar log (CSV)</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+// Mesmas regras do detect.py
+const CLASSES_INTERESSE = {
+  person:"pessoa", bicycle:"bicicleta", car:"carro", motorcycle:"moto",
+  bus:"ônibus", truck:"caminhão", knife:"faca", backpack:"mochila", handbag:"bolsa"
+};
+const CLASSES_ALERTA = new Set(["knife"]);
+const LIMIAR_PESSOAS = 8;
+const LIMIAR_VEICULOS = 10;
+const CONF = 0.4;
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const $ = id => document.getElementById(id);
+
+let model, stream, rodando = false, facing = "environment";
+let tPrev = performance.now(), ultimoLog = 0;
+const log = [["timestamp","pessoas","veiculos","objetos","alertas"]];
+
+cocoSsd.load({ base: "lite_mobilenet_v2" }).then(m => {
+  model = m;
+  $("status").textContent = "Modelo pronto";
+  $("iniciar").disabled = false;
+}).catch(e => $("status").textContent = "Erro ao carregar modelo: " + e.message);
+
+async function iniciar() {
+  parar();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+    });
+  } catch (e) {
+    $("status").textContent = "Sem acesso à câmera: " + e.message;
+    return;
+  }
+  video.srcObject = stream;
+  await video.play();
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  rodando = true;
+  $("status").textContent = "Detectando…";
+  loop();
+}
+
+function parar() {
+  rodando = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+}
+
+async function loop() {
+  if (!rodando) return;
+  const preds = await model.detect(video, 20, CONF);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const contagem = {};
+  for (const p of preds) {
+    if (!(p.class in CLASSES_INTERESSE)) continue;
+    contagem[p.class] = (contagem[p.class] || 0) + 1;
+    const [x, y, w, h] = p.bbox;
+    const cor = CLASSES_ALERTA.has(p.class) ? "#ef4444" : "#22c55e";
+    ctx.strokeStyle = cor; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
+    const rotulo = `${CLASSES_INTERESSE[p.class]} ${p.score.toFixed(2)}`;
+    ctx.font = "16px system-ui";
+    const tw = ctx.measureText(rotulo).width + 8;
+    ctx.fillStyle = cor; ctx.fillRect(x, Math.max(y - 20, 0), tw, 20);
+    ctx.fillStyle = "#000"; ctx.fillText(rotulo, x + 4, Math.max(y - 5, 15));
+  }
+
+  const pessoas = contagem.person || 0;
+  const veiculos = ["car","motorcycle","bus","truck"].reduce((s, c) => s + (contagem[c] || 0), 0);
+  const alertas = [];
+  if ([...CLASSES_ALERTA].some(c => contagem[c])) alertas.push("OBJETO PERIGOSO");
+  if (pessoas >= LIMIAR_PESSOAS) alertas.push("AGLOMERAÇÃO");
+  if (veiculos >= LIMIAR_VEICULOS) alertas.push("ENGARRAFAMENTO");
+
+  const agora = performance.now();
+  $("fps").textContent = (1000 / Math.max(agora - tPrev, 1)).toFixed(1);
+  tPrev = agora;
+  $("pessoas").textContent = pessoas;
+  $("veiculos").textContent = veiculos;
+  $("alerta").style.display = alertas.length ? "block" : "none";
+  $("alerta").textContent = "ALERTA: " + alertas.join(" | ");
+  if (alertas.length && navigator.vibrate) navigator.vibrate(200);
+
+  if (alertas.length || agora - ultimoLog >= 1000) {
+    log.push([new Date().toISOString(), pessoas, veiculos,
+      Object.entries(contagem).map(([k, v]) => `${k}=${v}`).join(";"), alertas.join(";")]);
+    ultimoLog = agora;
+  }
+  requestAnimationFrame(loop);
+}
+
+function baixarLog() {
+  const csv = log.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `deteccoes_${new Date().toISOString().slice(0,19).replace(/[:T]/g,"")}.csv`;
+  a.click();
+}
+
+$("iniciar").onclick = iniciar;
+$("parar").onclick = () => { parar(); $("status").textContent = "Parado"; };
+$("trocar").onclick = () => { facing = facing === "environment" ? "user" : "environment"; if (rodando) iniciar(); };
+$("baixar").onclick = baixarLog;
+</script>
+</body>
+</html>
