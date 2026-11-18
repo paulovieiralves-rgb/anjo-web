@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v14</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v15</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -314,12 +314,21 @@ function novaPosicao(lat, lng, origemCel = false, acc = null) {
 /* ===================== Câmera local ===================== */
 async function abrirCameraLocal() {
   pararStream();
+  const videoCfg = { facingMode: facing, width:{ ideal:1280 }, height:{ ideal:720 } };
+  const querAudio = modo === "cel" && $("microfone").checked;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width:{ ideal:1280 }, height:{ ideal:720 } },
-      audio: (modo === "cel" && $("microfone").checked) ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false
+      video: videoCfg,
+      audio: querAudio ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false
     });
-  } catch (e) { $("status").textContent = "Sem acesso à câmera: " + e.message; return false; }
+  } catch (e) {
+    if (!querAudio) { $("status").textContent = "Sem acesso à câmera: " + e.message; return false; }
+    // microfone negado ou indisponível: segue só com a câmera
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoCfg, audio:false });
+      $("status").textContent = "Microfone indisponível — transmitindo só imagem";
+    } catch (e2) { $("status").textContent = "Sem acesso à câmera: " + e2.message; return false; }
+  }
   video.srcObject = stream;
   await video.play().catch(() => {});
   iniciarDeteccao();
