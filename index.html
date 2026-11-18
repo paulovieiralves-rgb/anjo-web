@@ -38,7 +38,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v11</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v12</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -298,6 +298,7 @@ function novaPosicao(lat, lng, origemCel = false, acc = null) {
     $("geoAlerta").textContent = "ALERTA: fora da área delimitada";
     if (!dentro && dentroArea && navigator.vibrate) navigator.vibrate([200,100,200]);
     dentroArea = dentro;
+    if (!dentro) aoAlerta(["FORA DA AREA"]);
   }
 }
 
@@ -458,7 +459,8 @@ function pararGravacao() {
 function salvarGravacao(meta) {
   const ext = meta.tipo.includes("mp4") ? "mp4" : "webm";
   const blob = new Blob(pedacos, { type:meta.tipo.split(";")[0] });
-  const carimbo = meta.inicio.toISOString().slice(0,19).replace(/[:T]/g, "");
+  const z = n => String(n).padStart(2, "0"), d = meta.inicio;
+  const carimbo = `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
   const extra = alertasGrav.size ? "_" + [...alertasGrav].join("-").normalize("NFD").replace(/[^A-Za-z-]/g, "") : "";
   const nome = `anjo_cam${meta.camera || "x"}_${carimbo}_${meta.motivo}${extra}.${ext}`;
   const a = document.createElement("a");
