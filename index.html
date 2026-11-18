@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v15</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v16</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -451,6 +451,8 @@ async function monitorar() {
       else setLink("off", "● Nenhum celular transmitindo");
     } else if (modo === "cel" && transmitindo) {
       enviar({ tipo:"hb" });
+      // Vigia: sem confirmação da central por 6 s → reconecta sozinho (troca de rede, antena, queda)
+      if (agora - ultimoAck > 6000 && agora - ultimaReconexao > 8000 && document.visibilityState === "visible") reconectar();
       if (agora - ultimoAck < 3500 && ackInfo.recebendo)
         setLink("ok", `● Central recebendo — ${ackInfo.fps} fps · ${ackInfo.kbps} kbps${ackInfo.rota ? " · " + ackInfo.rota : ""}`);
       else if (agora - ultimoAck < 3500) setLink("warn", "● Central conectada, mas sem imagem");
@@ -704,20 +706,36 @@ async function iniciarCelular() {
 
 /* Conexão com a central (usada no início e na reconexão automática) */
 let transmitindo = false, codigoAtual = "", chamadaAtual = null, wakeLock = null;
+let ultimaReconexao = -1e9, tentativas = 0;
+async function reconectar() {
+  if (!transmitindo) return;
+  ultimaReconexao = performance.now(); tentativas++;
+  $("status").textContent = `Reconectando à central… (tentativa ${tentativas})`;
+  const cameraParada = !stream || stream.getVideoTracks().every(t => t.readyState === "ended");
+  if (cameraParada && !await abrirCameraLocal()) return;
+  try { conn?.close(); } catch {}
+  conn = null;
+  // a cada 3 tentativas, recria toda a conexão (necessário após troca Wi-Fi ↔ 4G)
+  if (tentativas % 3 === 0 && peer) { try { peer.destroy(); } catch {} peer = null; }
+  conectarCentral();
+}
 function ligarParaCentral(p) {
   const idCentral = "anjo-guarda-" + codigoAtual;
   if (chamadaAtual) { try { chamadaAtual.close(); } catch {} }
   chamadaAtual = p.call(idCentral, stream);
   chamadaAtual?.peerConnection?.addEventListener("iceconnectionstatechange", () => {
     const st = chamadaAtual.peerConnection.iceConnectionState;
-    if (st === "failed") $("status").textContent = "Vídeo não conectou — configure o TURN para usar no 4G";
+    if (st === "failed" || st === "disconnected") {
+      $("status").textContent = "Conexão de vídeo caiu — reconectando…";
+      if (transmitindo && performance.now() - ultimaReconexao > 4000) reconectar();
+    }
   });
   if (!conn || !conn.open) {
     conn = p.connect(idCentral, { reliable:true });
     conn.on("open", () => $("status").textContent = "Transmitindo para a central");
     conn.on("data", d => {
       if (d.tipo === "geo") definirGeo(d.pontos);
-      if (d.tipo === "ack") { ultimoAck = performance.now(); ackInfo = d; }
+      if (d.tipo === "ack") { ultimoAck = performance.now(); ackInfo = d; if (d.recebendo) tentativas = 0; }
     });
     conn.on("close", () => { if (transmitindo) $("status").textContent = "Central desconectada"; });
   }
@@ -817,6 +835,10 @@ async function conectarPeer(id, aoAbrir) {
   const config = { iceServers: await iceServers() };
   peer = id ? new Peer(id, { config }) : new Peer({ config });
   peer.on("open", () => aoAbrir(peer));
+  const este = peer;
+  peer.on("disconnected", () => {   // perdeu o servidor de sinalização (rede oscilou)
+    setTimeout(() => { if (este === peer && !este.destroyed && este.disconnected) { try { este.reconnect(); } catch {} } }, 1500);
+  });
   peer.on("error", e => {
     const msg = e.type === "unavailable-id" ? "Código em uso — escolha outro"
       : e.type === "peer-unavailable" ? "Central não encontrada — abra a Central no notebook primeiro"
