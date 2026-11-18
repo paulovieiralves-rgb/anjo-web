@@ -4,106 +4,272 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Anjo da Guarda</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  :root { --bg:#0b0f14; --fg:#e8eef5; --ok:#22c55e; --alert:#ef4444; --muted:#8a96a3; }
+  :root { --bg:#0b0f14; --card:#111827; --fg:#e8eef5; --ok:#22c55e; --alert:#ef4444; --muted:#8a96a3; --line:#374151; --blue:#3b82f6; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,sans-serif; }
-  header { padding:12px 16px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  header { padding:10px 16px; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid var(--line); }
   h1 { font-size:18px; margin:0; }
   #status { font-size:13px; color:var(--muted); }
-  #stage { position:relative; width:100%; max-width:960px; margin:0 auto; }
-  video, canvas { width:100%; display:block; }
-  canvas { position:absolute; inset:0; }
-  #painel { padding:10px 16px; display:flex; flex-wrap:wrap; gap:16px; font-size:15px; }
-  #alerta { margin:0 16px; padding:10px 12px; border-radius:8px; background:var(--alert); font-weight:700; display:none; }
-  .controles { padding:10px 16px 24px; display:flex; flex-wrap:wrap; gap:8px; }
-  button { background:#1f2937; color:var(--fg); border:1px solid #374151; border-radius:8px; padding:10px 14px; font-size:15px; }
-  button.primary { background:var(--ok); color:#06210f; border:none; font-weight:700; }
+  .abas { display:flex; gap:6px; flex-wrap:wrap; }
+  button, select, input { background:#1f2937; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:14px; }
+  button.ativo, button.primary { background:var(--ok); color:#06210f; border:none; font-weight:700; }
+  button:disabled { opacity:.5; }
+  main { display:grid; grid-template-columns: 1fr 1fr; gap:12px; padding:12px 16px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  #mapa { height:62vh; min-height:340px; border-radius:10px; }
+  @media (max-width: 860px) { #mapa { height:42vh; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; }
+  #stage { position:relative; width:100%; background:#000; border-radius:8px; overflow:hidden; min-height:200px; }
+  video, #canvas { width:100%; display:block; }
+  #canvas { position:absolute; inset:0; height:100%; }
+  #camLabel { position:absolute; left:8px; top:8px; background:rgba(0,0,0,.6); padding:4px 8px; border-radius:6px; font-size:13px; }
+  .painel { display:flex; flex-wrap:wrap; gap:14px; font-size:14px; margin:8px 0; }
+  .alerta { padding:8px 10px; border-radius:8px; background:var(--alert); font-weight:700; display:none; margin:6px 0; }
+  .controles { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .dica { font-size:12px; color:var(--muted); margin-top:6px; }
+  .hidden { display:none !important; }
+  .cam-pin { background:var(--blue); color:#fff; border:2px solid #fff; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; }
+  .cam-pin.on { background:var(--ok); color:#06210f; transform:scale(1.25); }
+  .leaflet-popup-content img { width:200px; border-radius:6px; display:block; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda · Teste 1</h1>
-  <span id="status">Carregando modelo…</span>
+  <h1>Anjo da Guarda</h1>
+  <div class="abas">
+    <button data-modo="sim" class="ativo">Simulação</button>
+    <button data-modo="cel">Celular (câmera)</button>
+    <button data-modo="central">Central (notebook)</button>
+  </div>
+  <span id="status">Carregando modelo de IA…</span>
 </header>
 
-<div id="stage">
-  <video id="video" playsinline muted></video>
-  <canvas id="canvas"></canvas>
-</div>
+<main>
+  <div id="mapa"></div>
 
-<div id="painel">
-  <span>Pessoas: <b id="pessoas">0</b></span>
-  <span>Veículos: <b id="veiculos">0</b></span>
-  <span>FPS: <b id="fps">0</b></span>
-</div>
-<div id="alerta"></div>
+  <div class="card">
+    <div id="stage">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="canvas"></canvas>
+      <div id="camLabel">Sem câmera ativa</div>
+    </div>
+    <div class="painel">
+      <span>Pessoas: <b id="pessoas">0</b></span>
+      <span>Veículos: <b id="veiculos">0</b></span>
+      <span>Câmeras: <b id="ncams">0</b></span>
+      <span>Percorrido: <b id="dist">0 m</b></span>
+      <span>FPS: <b id="fps">0</b></span>
+    </div>
+    <div id="alerta" class="alerta"></div>
+    <div id="geoAlerta" class="alerta"></div>
 
-<div class="controles">
-  <button id="iniciar" class="primary" disabled>Iniciar câmera</button>
-  <button id="trocar">Trocar câmera</button>
-  <button id="parar">Parar</button>
-  <button id="baixar">Baixar log (CSV)</button>
-</div>
+    <!-- Simulação -->
+    <div id="ctl-sim" class="controles">
+      <select id="velocidade">
+        <option value="1.4">A pé</option>
+        <option value="5">Bike</option>
+        <option value="12">Carro</option>
+      </select>
+      <button id="simIniciar" class="primary">Iniciar simulação</button>
+      <button id="simParar">Parar</button>
+      <button id="rotaDesenhar">Desenhar rota</button>
+      <button id="rotaPadrao">Rota padrão</button>
+    </div>
 
+    <!-- Celular -->
+    <div id="ctl-cel" class="controles hidden">
+      <input id="codigoCel" placeholder="Código da central" value="paulo">
+      <button id="celIniciar" class="primary">Iniciar e transmitir</button>
+      <button id="celParar">Parar</button>
+    </div>
+
+    <!-- Central -->
+    <div id="ctl-central" class="controles hidden">
+      <input id="codigoCentral" placeholder="Código da central" value="paulo">
+      <button id="centralAbrir" class="primary">Abrir central</button>
+    </div>
+
+    <div class="controles">
+      <button id="geoDesenhar">Desenhar área</button>
+      <button id="geoLimpar">Limpar área</button>
+      <button id="trocar">Trocar câmera</button>
+      <button id="baixar">Baixar log (CSV)</button>
+    </div>
+    <div id="dica" class="dica"></div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
-// Mesmas regras do detect.py
-const CLASSES_INTERESSE = {
-  person:"pessoa", bicycle:"bicicleta", car:"carro", motorcycle:"moto",
-  bus:"ônibus", truck:"caminhão", knife:"faca", backpack:"mochila", handbag:"bolsa"
-};
+/* ===================== Configuração ===================== */
+const CLASSES_INTERESSE = { person:"pessoa", bicycle:"bicicleta", car:"carro", motorcycle:"moto",
+  bus:"ônibus", truck:"caminhão", knife:"faca", backpack:"mochila", handbag:"bolsa" };
 const CLASSES_ALERTA = new Set(["knife"]);
-const LIMIAR_PESSOAS = 8;
-const LIMIAR_VEICULOS = 10;
-const CONF = 0.4;
+const LIMIAR_PESSOAS = 8, LIMIAR_VEICULOS = 10, CONF = 0.4;
+const ESPACO_CAMERAS = 50; // metros
+const ROTA_PADRAO = [ // Ipanema – Rua Visconde de Pirajá
+  [-22.98468,-43.19856],[-22.98430,-43.20280],[-22.98420,-43.20620],[-22.98450,-43.21000],[-22.98490,-43.21300]
+];
+const DICAS = {
+  sim: "Simulação: o ponto percorre a rota no mapa, com câmeras a cada 50 m. A imagem vem da webcam (ou câmera do celular) e troca de câmera conforme o avanço.",
+  cel: "Celular: abra a Central no notebook com o mesmo código, depois toque em Iniciar e caminhe. A cada 50 m o celular vira uma nova câmera.",
+  central: "Central: clique em Abrir central e depois inicie o celular com o mesmo código. A imagem e a posição do celular aparecem aqui."
+};
 
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
+/* ===================== Elementos e estado ===================== */
 const $ = id => document.getElementById(id);
-
-let model, stream, rodando = false, facing = "environment";
+const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+let modo = "sim", model = null, stream = null, detectando = false, facing = "environment";
 let tPrev = performance.now(), ultimoLog = 0;
-const log = [["timestamp","pessoas","veiculos","objetos","alertas"]];
+const log = [["timestamp","modo","lat","lng","camera","pessoas","veiculos","objetos","alertas"]];
 
-cocoSsd.load({ base: "lite_mobilenet_v2" }).then(m => {
-  model = m;
-  $("status").textContent = "Modelo pronto";
-  $("iniciar").disabled = false;
-}).catch(e => $("status").textContent = "Erro ao carregar modelo: " + e.message);
+let posAtual = null, camAtiva = null, percorrido = 0;
+let cameras = []; // {id, lat, lng, marker, img}
+let rota = ROTA_PADRAO.map(p => L.latLng(p[0], p[1]));
+let simTimer = null, simDist = 0;
+let desenhandoRota = false, desenhandoGeo = false;
+let geoPontos = [], geoPoligono = null, dentroArea = true;
+let peer = null, conn = null;
 
-async function iniciar() {
-  parar();
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
-    });
-  } catch (e) {
-    $("status").textContent = "Sem acesso à câmera: " + e.message;
-    return;
+/* ===================== Mapa ===================== */
+const mapa = L.map("mapa").setView([-22.9845, -43.2060], 16);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+  maxZoom: 20, subdomains: "abcd",
+  attribution: "&copy; OpenStreetMap &copy; CARTO"
+}).addTo(mapa);
+const rotaLinha = L.polyline(rota, { color:"#3b82f6", weight:4, opacity:.6, dashArray:"6 6" }).addTo(mapa);
+const trilha = L.polyline([], { color:"#22c55e", weight:5 }).addTo(mapa);
+const usuario = L.circleMarker([0,0], { radius:9, color:"#fff", weight:3, fillColor:"#ef4444", fillOpacity:1 });
+
+mapa.on("click", e => {
+  if (desenhandoRota) {
+    rota.push(e.latlng); rotaLinha.setLatLngs(rota);
+  } else if (desenhandoGeo) {
+    geoPontos.push(e.latlng);
+    if (!geoPoligono) geoPoligono = L.polygon(geoPontos, { color:"#f59e0b", fillOpacity:.12 }).addTo(mapa);
+    else geoPoligono.setLatLngs(geoPontos);
   }
-  video.srcObject = stream;
-  await video.play();
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  rodando = true;
-  $("status").textContent = "Detectando…";
-  loop();
+});
+
+function dist(a, b) { return L.latLng(a).distanceTo(L.latLng(b)); }
+
+function dentroPoligono(p, poly) {
+  let dentro = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].lng, yi = poly[i].lat, xj = poly[j].lng, yj = poly[j].lat;
+    if (((yi > p.lat) !== (yj > p.lat)) && (p.lng < (xj - xi) * (p.lat - yi) / (yj - yi) + xi)) dentro = !dentro;
+  }
+  return dentro;
 }
 
-function parar() {
-  rodando = false;
+/* ===================== Câmeras ===================== */
+function snapshot() {
+  if (!video.videoWidth) return null;
+  const c = document.createElement("canvas");
+  c.width = 320; c.height = Math.round(320 * video.videoHeight / video.videoWidth);
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.6);
+}
+
+function criarCamera(lat, lng, img, idForcado) {
+  const id = idForcado || cameras.length + 1;
+  const icon = L.divIcon({ className:"", html:`<div class="cam-pin" id="pin${id}">${id}</div>`, iconSize:[24,24], iconAnchor:[12,12] });
+  const marker = L.marker([lat, lng], { icon }).addTo(mapa);
+  const cam = { id, lat, lng, marker, img };
+  atualizarPopup(cam);
+  cameras.push(cam);
+  $("ncams").textContent = cameras.length;
+  return cam;
+}
+
+function atualizarPopup(cam) {
+  cam.marker.bindPopup(`<b>Câmera ${cam.id}</b><br>${cam.img ? `<img src="${cam.img}">` : "Sem imagem ainda"}`);
+}
+
+function ativarCamera(cam) {
+  if (camAtiva === cam) return;
+  if (camAtiva) document.getElementById("pin" + camAtiva.id)?.classList.remove("on");
+  camAtiva = cam;
+  document.getElementById("pin" + cam.id)?.classList.add("on");
+  $("camLabel").textContent = `Câmera ${cam.id} · ao vivo`;
+}
+
+function camMaisProxima(p) {
+  let melhor = null, dMin = Infinity;
+  for (const c of cameras) { const d = dist(p, [c.lat, c.lng]); if (d < dMin) { dMin = d; melhor = c; } }
+  return { cam: melhor, d: dMin };
+}
+
+/* ===================== Posição (comum a todos os modos) ===================== */
+function novaPosicao(lat, lng, origemCel = false) {
+  const p = L.latLng(lat, lng);
+  if (posAtual) percorrido += dist(posAtual, p);
+  posAtual = p;
+  if (!mapa.hasLayer(usuario)) usuario.addTo(mapa);
+  usuario.setLatLng(p);
+  trilha.addLatLng(p);
+  $("dist").textContent = `${Math.round(percorrido)} m`;
+  if (!mapa.getBounds().pad(-0.2).contains(p)) mapa.panTo(p);
+
+  // Celular: vira nova câmera a cada 50 m
+  if (origemCel) {
+    const ultima = cameras[cameras.length - 1];
+    if (!ultima || dist(p, [ultima.lat, ultima.lng]) >= ESPACO_CAMERAS) {
+      const cam = criarCamera(lat, lng, snapshot());
+      enviar({ tipo:"cam", id:cam.id, lat, lng, img:cam.img });
+    }
+  }
+  const { cam } = camMaisProxima(p);
+  if (cam) ativarCamera(cam);
+
+  // Geofence
+  if (geoPontos.length >= 3) {
+    const dentro = dentroPoligono(p, geoPontos);
+    $("geoAlerta").style.display = dentro ? "none" : "block";
+    $("geoAlerta").textContent = "ALERTA: fora da área delimitada";
+    if (!dentro && dentroArea && navigator.vibrate) navigator.vibrate([200,100,200]);
+    dentroArea = dentro;
+  }
+}
+
+/* ===================== Câmera local ===================== */
+async function abrirCameraLocal() {
+  pararStream();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false
+    });
+  } catch (e) { $("status").textContent = "Sem acesso à câmera: " + e.message; return false; }
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  iniciarDeteccao();
+  return true;
+}
+
+function pararStream() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
 }
 
+/* ===================== Detecção ===================== */
+function iniciarDeteccao() {
+  if (detectando || !model) return;
+  detectando = true;
+  loop();
+}
+
 async function loop() {
-  if (!rodando) return;
+  if (!detectando) return;
+  if (video.readyState < 2 || !video.videoWidth) { requestAnimationFrame(loop); return; }
+  if (canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+
   const preds = await model.detect(video, 20, CONF);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
   const contagem = {};
   for (const p of preds) {
     if (!(p.class in CLASSES_INTERESSE)) continue;
@@ -117,7 +283,6 @@ async function loop() {
     ctx.fillStyle = cor; ctx.fillRect(x, Math.max(y - 20, 0), tw, 20);
     ctx.fillStyle = "#000"; ctx.fillText(rotulo, x + 4, Math.max(y - 5, 15));
   }
-
   const pessoas = contagem.person || 0;
   const veiculos = ["car","motorcycle","bus","truck"].reduce((s, c) => s + (contagem[c] || 0), 0);
   const alertas = [];
@@ -131,29 +296,230 @@ async function loop() {
   $("pessoas").textContent = pessoas;
   $("veiculos").textContent = veiculos;
   $("alerta").style.display = alertas.length ? "block" : "none";
-  $("alerta").textContent = "ALERTA: " + alertas.join(" | ");
-  if (alertas.length && navigator.vibrate) navigator.vibrate(200);
+  $("alerta").textContent = "ALERTA: " + alertas.join(" | ") + (camAtiva ? ` (Câmera ${camAtiva.id})` : "");
+  if (alertas.length && camAtiva) {
+    const pin = document.getElementById("pin" + camAtiva.id);
+    if (pin) pin.style.background = "#ef4444";
+  } else if (camAtiva) {
+    const pin = document.getElementById("pin" + camAtiva.id);
+    if (pin) pin.style.background = "";
+  }
 
   if (alertas.length || agora - ultimoLog >= 1000) {
-    log.push([new Date().toISOString(), pessoas, veiculos,
+    log.push([new Date().toISOString(), modo, posAtual?.lat?.toFixed(6) ?? "", posAtual?.lng?.toFixed(6) ?? "",
+      camAtiva?.id ?? "", pessoas, veiculos,
       Object.entries(contagem).map(([k, v]) => `${k}=${v}`).join(";"), alertas.join(";")]);
     ultimoLog = agora;
   }
   requestAnimationFrame(loop);
 }
 
+/* ===================== Modo Simulação ===================== */
+function pontoNaRota(d) {
+  let acum = 0;
+  for (let i = 1; i < rota.length; i++) {
+    const seg = rota[i - 1].distanceTo(rota[i]);
+    if (acum + seg >= d) {
+      const f = (d - acum) / seg;
+      return L.latLng(rota[i-1].lat + (rota[i].lat - rota[i-1].lat) * f, rota[i-1].lng + (rota[i].lng - rota[i-1].lng) * f);
+    }
+    acum += seg;
+  }
+  return null;
+}
+
+function comprimentoRota() {
+  let t = 0; for (let i = 1; i < rota.length; i++) t += rota[i-1].distanceTo(rota[i]); return t;
+}
+
+function prepararCamerasRota() {
+  limparCameras();
+  const total = comprimentoRota();
+  for (let d = 0; d <= total; d += ESPACO_CAMERAS) {
+    const p = pontoNaRota(d); if (p) criarCamera(p.lat, p.lng, null);
+  }
+}
+
+async function iniciarSimulacao() {
+  if (rota.length < 2) { $("status").textContent = "Desenhe uma rota com pelo menos 2 pontos"; return; }
+  pararSimulacao();
+  desenhandoRota = false; $("rotaDesenhar").classList.remove("ativo");
+  resetTrajeto();
+  prepararCamerasRota();
+  mapa.fitBounds(rotaLinha.getBounds().pad(0.2));
+  if (!stream) await abrirCameraLocal();
+  $("status").textContent = "Simulando trajeto…";
+  simDist = 0;
+  const passoMs = 500;
+  simTimer = setInterval(() => {
+    const vel = parseFloat($("velocidade").value);
+    simDist += vel * passoMs / 1000;
+    const p = pontoNaRota(simDist);
+    if (!p) { pararSimulacao(); $("status").textContent = "Simulação concluída"; return; }
+    novaPosicao(p.lat, p.lng);
+    if (camAtiva && !camAtiva.img) { camAtiva.img = snapshot(); atualizarPopup(camAtiva); }
+  }, passoMs);
+}
+
+function pararSimulacao() { if (simTimer) clearInterval(simTimer); simTimer = null; }
+
+/* ===================== Modo Celular ===================== */
+let watchId = null;
+async function iniciarCelular() {
+  const codigo = $("codigoCel").value.trim();
+  if (!codigo) return;
+  resetTrajeto(); limparCameras();
+  if (!await abrirCameraLocal()) return;
+
+  if (!navigator.geolocation) { $("status").textContent = "GPS indisponível neste aparelho"; return; }
+  watchId = navigator.geolocation.watchPosition(
+    pos => {
+      const { latitude:lat, longitude:lng, accuracy } = pos.coords;
+      if (!posAtual) mapa.setView([lat, lng], 17);
+      novaPosicao(lat, lng, true);
+      enviar({ tipo:"pos", lat, lng, acc:accuracy });
+    },
+    e => $("status").textContent = "Erro de GPS: " + e.message,
+    { enableHighAccuracy:true, maximumAge:1000, timeout:15000 }
+  );
+
+  conectarPeer(null, p => {
+    const idCentral = "anjo-guarda-" + codigo;
+    p.call(idCentral, stream);
+    conn = p.connect(idCentral, { reliable:true });
+    conn.on("open", () => $("status").textContent = "Transmitindo para a central");
+    conn.on("data", d => { if (d.tipo === "geo") definirGeo(d.pontos); });
+    conn.on("close", () => $("status").textContent = "Central desconectada");
+  });
+  $("status").textContent = "Câmera e GPS ativos — conectando à central…";
+}
+
+function pararCelular() {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  pararStream();
+  if (peer) peer.destroy(); peer = null; conn = null;
+  $("status").textContent = "Parado";
+}
+
+/* ===================== Modo Central ===================== */
+function abrirCentral() {
+  const codigo = $("codigoCentral").value.trim();
+  if (!codigo) return;
+  resetTrajeto(); limparCameras();
+  conectarPeer("anjo-guarda-" + codigo, p => {
+    $("status").textContent = `Central aberta (código: ${codigo}) — aguardando celular`;
+    p.on("call", call => {
+      call.answer();
+      call.on("stream", s => {
+        video.srcObject = s; video.play().catch(() => {});
+        $("status").textContent = "Recebendo imagem do celular";
+        iniciarDeteccao();
+      });
+    });
+    p.on("connection", c => {
+      conn = c;
+      c.on("open", () => { if (geoPontos.length >= 3) enviar({ tipo:"geo", pontos:geoPontos.map(q => [q.lat, q.lng]) }); });
+      c.on("data", d => {
+        if (d.tipo === "pos") novaPosicao(d.lat, d.lng);
+        if (d.tipo === "cam") { criarCamera(d.lat, d.lng, d.img, d.id); if (posAtual) ativarCamera(camMaisProxima(posAtual).cam); }
+      });
+      c.on("close", () => $("status").textContent = "Celular desconectado");
+    });
+  });
+}
+
+/* ===================== Comunicação (PeerJS) ===================== */
+function conectarPeer(id, aoAbrir) {
+  if (peer) peer.destroy();
+  peer = id ? new Peer(id) : new Peer();
+  peer.on("open", () => aoAbrir(peer));
+  peer.on("error", e => {
+    const msg = e.type === "unavailable-id" ? "Código em uso — escolha outro"
+      : e.type === "peer-unavailable" ? "Central não encontrada — abra a Central no notebook primeiro"
+      : "Erro de conexão: " + e.type;
+    $("status").textContent = msg;
+  });
+}
+
+function enviar(obj) { if (conn && conn.open) conn.send(obj); }
+
+/* ===================== Área delimitada ===================== */
+function definirGeo(pontos) {
+  geoPontos = pontos.map(p => L.latLng(p[0], p[1]));
+  if (geoPoligono) mapa.removeLayer(geoPoligono);
+  geoPoligono = geoPontos.length ? L.polygon(geoPontos, { color:"#f59e0b", fillOpacity:.12 }).addTo(mapa) : null;
+  dentroArea = true;
+}
+
+/* ===================== Utilidades ===================== */
+function resetTrajeto() {
+  posAtual = null; percorrido = 0; trilha.setLatLngs([]);
+  if (mapa.hasLayer(usuario)) mapa.removeLayer(usuario);
+  $("dist").textContent = "0 m";
+}
+
+function limparCameras() {
+  cameras.forEach(c => mapa.removeLayer(c.marker));
+  cameras = []; camAtiva = null;
+  $("ncams").textContent = 0; $("camLabel").textContent = "Sem câmera ativa";
+}
+
 function baixarLog() {
   const csv = log.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `deteccoes_${new Date().toISOString().slice(0,19).replace(/[:T]/g,"")}.csv`;
+  a.href = URL.createObjectURL(new Blob([csv], { type:"text/csv" }));
+  a.download = `anjo_log_${new Date().toISOString().slice(0,19).replace(/[:T]/g, "")}.csv`;
   a.click();
 }
 
-$("iniciar").onclick = iniciar;
-$("parar").onclick = () => { parar(); $("status").textContent = "Parado"; };
-$("trocar").onclick = () => { facing = facing === "environment" ? "user" : "environment"; if (rodando) iniciar(); };
+function trocarModo(novo) {
+  pararSimulacao();
+  if (modo === "cel") pararCelular();
+  modo = novo;
+  document.querySelectorAll("[data-modo]").forEach(b => b.classList.toggle("ativo", b.dataset.modo === novo));
+  ["sim","cel","central"].forEach(m => $("ctl-" + m).classList.toggle("hidden", m !== novo));
+  $("trocar").classList.toggle("hidden", novo === "central");
+  $("dica").textContent = DICAS[novo];
+  if (novo === "sim") prepararCamerasRota(); else limparCameras();
+  resetTrajeto();
+}
+
+/* ===================== Eventos ===================== */
+document.querySelectorAll("[data-modo]").forEach(b => b.onclick = () => trocarModo(b.dataset.modo));
+$("simIniciar").onclick = iniciarSimulacao;
+$("simParar").onclick = () => { pararSimulacao(); $("status").textContent = "Simulação parada"; };
+$("rotaDesenhar").onclick = () => {
+  desenhandoRota = !desenhandoRota; desenhandoGeo = false;
+  $("rotaDesenhar").classList.toggle("ativo", desenhandoRota); $("geoDesenhar").classList.remove("ativo");
+  if (desenhandoRota) { pararSimulacao(); rota = []; rotaLinha.setLatLngs(rota); limparCameras(); resetTrajeto();
+    $("status").textContent = "Clique no mapa para traçar a rota; depois clique em Iniciar simulação"; }
+};
+$("rotaPadrao").onclick = () => {
+  rota = ROTA_PADRAO.map(p => L.latLng(p[0], p[1])); rotaLinha.setLatLngs(rota);
+  prepararCamerasRota(); resetTrajeto(); mapa.fitBounds(rotaLinha.getBounds().pad(0.2));
+};
+$("celIniciar").onclick = iniciarCelular;
+$("celParar").onclick = pararCelular;
+$("centralAbrir").onclick = abrirCentral;
+$("geoDesenhar").onclick = () => {
+  desenhandoGeo = !desenhandoGeo; desenhandoRota = false;
+  $("geoDesenhar").classList.toggle("ativo", desenhandoGeo); $("rotaDesenhar").classList.remove("ativo");
+  if (desenhandoGeo) { definirGeo([]); $("status").textContent = "Clique no mapa para marcar os vértices da área; clique de novo em Desenhar área para concluir"; }
+  else { $("status").textContent = geoPontos.length >= 3 ? "Área definida" : "Área precisa de pelo menos 3 pontos";
+    if (geoPontos.length >= 3) enviar({ tipo:"geo", pontos:geoPontos.map(q => [q.lat, q.lng]) }); }
+};
+$("geoLimpar").onclick = () => { definirGeo([]); $("geoAlerta").style.display = "none"; enviar({ tipo:"geo", pontos:[] }); };
+$("trocar").onclick = () => { facing = facing === "environment" ? "user" : "environment"; if (stream) abrirCameraLocal(); };
 $("baixar").onclick = baixarLog;
+
+/* ===================== Início ===================== */
+$("dica").textContent = DICAS.sim;
+prepararCamerasRota();
+mapa.fitBounds(rotaLinha.getBounds().pad(0.2));
+cocoSsd.load({ base:"lite_mobilenet_v2" })
+  .then(m => { model = m; $("status").textContent = "Pronto"; if (video.srcObject) iniciarDeteccao(); })
+  .catch(e => $("status").textContent = "Erro ao carregar IA: " + e.message);
 </script>
 </body>
 </html>
