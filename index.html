@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v16</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v17</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -452,7 +452,8 @@ async function monitorar() {
     } else if (modo === "cel" && transmitindo) {
       enviar({ tipo:"hb" });
       // Vigia: sem confirmação da central por 6 s → reconecta sozinho (troca de rede, antena, queda)
-      if (agora - ultimoAck > 6000 && agora - ultimaReconexao > 8000 && document.visibilityState === "visible") reconectar();
+      // só age se a central já confirmou alguma vez (centrais antigas, sem confirmação, não disparam o vigia)
+      if (ultimoAck > 0 && agora - ultimoAck > 6000 && agora - ultimaReconexao > 8000 && document.visibilityState === "visible") reconectar();
       if (agora - ultimoAck < 3500 && ackInfo.recebendo)
         setLink("ok", `● Central recebendo — ${ackInfo.fps} fps · ${ackInfo.kbps} kbps${ackInfo.rota ? " · " + ackInfo.rota : ""}`);
       else if (agora - ultimoAck < 3500) setLink("warn", "● Central conectada, mas sem imagem");
@@ -965,8 +966,39 @@ $("gravarAlertas").checked = lerCfg("gravarAlertas") !== "0";
 $("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas").checked ? "1" : "0");
 
 /* ===================== Início ===================== */
+/* ===================== Atualização automática ===================== */
+// A cada minuto verifica version.json no GitHub. A central recarrega sozinha e reabre;
+// o celular mostra um aviso (recarregar exigiria nova permissão de câmera).
+const VERSAO = 17;
+async function verificarVersao() {
+  try {
+    const r = await fetch("version.json?t=" + Date.now(), { cache:"no-store" });
+    if (!r.ok) return;
+    const { v } = await r.json();
+    if (!(v > VERSAO)) return;
+    if (modo === "central" && peer && !gravando) {
+      const u = new URL(location.href);
+      u.searchParams.set("v", v); u.searchParams.set("auto", "central");
+      u.searchParams.set("codigo", $("codigoCentral").value.trim());
+      location.replace(u.toString());
+    } else if (modo === "cel" || modo === "sim") {
+      $("status").textContent = `Nova versão v${v} disponível — recarregue a página quando puder`;
+    }
+  } catch {}
+}
+setInterval(verificarVersao, 60000);
+
 $("dica").textContent = DICAS.sim;
 prepararCamerasRota();
+// Reabre a central automaticamente após atualização
+(() => {
+  const q = new URLSearchParams(location.search);
+  if (q.get("auto") === "central") {
+    if (q.get("codigo")) $("codigoCentral").value = q.get("codigo");
+    trocarModo("central");
+    setTimeout(abrirCentral, 500);
+  }
+})();
 mapa.fitBounds(rotaLinha.getBounds().pad(0.2));
 cocoSsd.load({ base:"lite_mobilenet_v2" })
   .then(m => { model = m; $("status").textContent = "Pronto"; if (video.srcObject) iniciarDeteccao(); })
