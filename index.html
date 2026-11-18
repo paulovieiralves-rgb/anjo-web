@@ -24,6 +24,10 @@
   #stage { position:relative; width:100%; background:#000; border-radius:8px; overflow:hidden; min-height:200px; }
   video, #canvas { width:100%; display:block; }
   #canvas { position:absolute; inset:0; height:100%; }
+  .link { display:none; padding:8px 10px; border-radius:8px; font-weight:700; font-size:14px; margin-bottom:8px; }
+  .link.ok { background:#14532d; color:#bbf7d0; }
+  .link.warn { background:#713f12; color:#fef08a; }
+  .link.off { background:#7f1d1d; color:#fecaca; }
   #recBadge { position:absolute; right:8px; top:8px; background:#ef4444; color:#fff; padding:4px 8px; border-radius:6px; font-size:13px; font-weight:700; display:none; }
   #camLabel { position:absolute; left:8px; top:8px; background:rgba(0,0,0,.6); padding:4px 8px; border-radius:6px; font-size:13px; }
   .painel { display:flex; flex-wrap:wrap; gap:14px; font-size:14px; margin:8px 0; }
@@ -38,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v12</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v13</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -51,6 +55,7 @@
   <div id="mapa"></div>
 
   <div class="card">
+    <div id="link" class="link"></div>
     <div id="stage">
       <video id="video" playsinline muted autoplay></video>
       <canvas id="canvas"></canvas>
@@ -390,6 +395,59 @@ async function loop() {
   requestAnimationFrame(loop);
 }
 
+/* ===================== Indicador de transmissão (tempo real) ===================== */
+// A central mede os quadros recebidos e confirma ao celular a cada segundo.
+let ultimoAck = -1e9, ultimoHb = -1e9, ackInfo = {}, chamadaCentral = null, statsAnt = null, estadoLinkAnt = "";
+function setLink(estado, texto) {
+  const el = $("link"); el.className = "link " + estado; el.textContent = texto; el.style.display = "block";
+  if (modo === "cel" && estadoLinkAnt === "ok" && estado === "off" && navigator.vibrate) navigator.vibrate([300, 100, 300]);
+  estadoLinkAnt = estado;
+}
+async function lerStats(pc, tipo) {
+  const r = await pc.getStats(); const mapa = {}; let bytes = 0, frames = 0, parId = null;
+  r.forEach(st => {
+    mapa[st.id] = st;
+    if (st.type === tipo && st.kind === "video") {
+      bytes = st.bytesReceived ?? st.bytesSent ?? 0;
+      frames = st.framesDecoded ?? st.framesEncoded ?? st.framesSent ?? 0;
+    }
+    if (st.type === "transport" && st.selectedCandidatePairId) parId = st.selectedCandidatePairId;
+  });
+  if (!parId) r.forEach(st => { if (st.type === "candidate-pair" && st.nominated && st.state === "succeeded") parId = st.id; });
+  const par = parId && mapa[parId], loc = par && mapa[par.localCandidateId], rem = par && mapa[par.remoteCandidateId];
+  const rota = (loc || rem) ? ((loc?.candidateType === "relay" || rem?.candidateType === "relay") ? "via TURN" : "direto") : "";
+  return { bytes, frames, rota, t:performance.now() };
+}
+async function monitorar() {
+  const agora = performance.now();
+  try {
+    if (modo === "central") {
+      if (!peer) { $("link").style.display = "none"; return; }
+      let fps = 0, kbps = 0, rota = "";
+      const pc = chamadaCentral?.peerConnection;
+      if (pc && pc.connectionState !== "closed") {
+        const st = await lerStats(pc, "inbound-rtp");
+        if (statsAnt) { const dt = (st.t - statsAnt.t) / 1000; fps = (st.frames - statsAnt.frames) / dt; kbps = (st.bytes - statsAnt.bytes) * 8 / 1000 / dt; }
+        statsAnt = st; rota = st.rota;
+      }
+      const recebendo = fps > 0.5;
+      enviar({ tipo:"ack", recebendo, fps:Math.round(fps), kbps:Math.round(kbps), rota });
+      if (recebendo) setLink("ok", `● Recebendo do celular — ${Math.round(fps)} fps · ${Math.round(kbps)} kbps${rota ? " · " + rota : ""}`);
+      else if (agora - ultimoHb < 3500) setLink("warn", "● Celular conectado, mas sem imagem");
+      else setLink("off", "● Nenhum celular transmitindo");
+    } else if (modo === "cel" && transmitindo) {
+      enviar({ tipo:"hb" });
+      if (agora - ultimoAck < 3500 && ackInfo.recebendo)
+        setLink("ok", `● Central recebendo — ${ackInfo.fps} fps · ${ackInfo.kbps} kbps${ackInfo.rota ? " · " + ackInfo.rota : ""}`);
+      else if (agora - ultimoAck < 3500) setLink("warn", "● Central conectada, mas sem imagem");
+      else setLink("off", "● Central NÃO está recebendo");
+    } else {
+      $("link").style.display = "none"; estadoLinkAnt = "";
+    }
+  } catch (e) { console.log("monitor", e); }
+}
+setInterval(monitorar, 1000);
+
 /* ===================== Gravação (central) ===================== */
 // Grava o vídeo com as caixas de detecção, IDs, data/hora e câmera impressos na imagem.
 const POS_ALERTA_MS = 10000;   // continua gravando 10 s após o último alerta
@@ -637,7 +695,10 @@ function ligarParaCentral(p) {
   if (!conn || !conn.open) {
     conn = p.connect(idCentral, { reliable:true });
     conn.on("open", () => $("status").textContent = "Transmitindo para a central");
-    conn.on("data", d => { if (d.tipo === "geo") definirGeo(d.pontos); });
+    conn.on("data", d => {
+      if (d.tipo === "geo") definirGeo(d.pontos);
+      if (d.tipo === "ack") { ultimoAck = performance.now(); ackInfo = d; }
+    });
     conn.on("close", () => { if (transmitindo) $("status").textContent = "Central desconectada"; });
   }
 }
@@ -687,6 +748,7 @@ function abrirCentral() {
   conectarPeer("anjo-guarda-" + codigo, p => {
     $("status").textContent = `Central aberta (código: ${codigo}) — aguardando celular`;
     p.on("call", call => {
+      chamadaCentral = call; statsAnt = null;
       call.answer();
       call.on("stream", s => {
         video.srcObject = s; video.play().catch(() => {});
@@ -698,6 +760,7 @@ function abrirCentral() {
       conn = c;
       c.on("open", () => { if (geoPontos.length >= 3) enviar({ tipo:"geo", pontos:geoPontos.map(q => [q.lat, q.lng]) }); });
       c.on("data", d => {
+        ultimoHb = performance.now();
         if (d.tipo === "pos") novaPosicao(d.lat, d.lng, false, d.acc ?? null);
         if (d.tipo === "pausa") $("status").textContent = "Celular em segundo plano — transmissão pausada";
         if (d.tipo === "retomada") $("status").textContent = "Celular voltou — reconectando imagem…";
