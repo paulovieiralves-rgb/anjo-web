@@ -24,6 +24,7 @@
   #stage { position:relative; width:100%; background:#000; border-radius:8px; overflow:hidden; min-height:200px; }
   video, #canvas { width:100%; display:block; }
   #canvas { position:absolute; inset:0; height:100%; }
+  #recBadge { position:absolute; right:8px; top:8px; background:#ef4444; color:#fff; padding:4px 8px; border-radius:6px; font-size:13px; font-weight:700; display:none; }
   #camLabel { position:absolute; left:8px; top:8px; background:rgba(0,0,0,.6); padding:4px 8px; border-radius:6px; font-size:13px; }
   .painel { display:flex; flex-wrap:wrap; gap:14px; font-size:14px; margin:8px 0; }
   .alerta { padding:8px 10px; border-radius:8px; background:var(--alert); font-weight:700; display:none; margin:6px 0; }
@@ -37,7 +38,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v9</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v10</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -54,6 +55,7 @@
       <video id="video" playsinline muted autoplay></video>
       <canvas id="canvas"></canvas>
       <div id="camLabel">Sem câmera ativa</div>
+      <div id="recBadge">● REC 00:00</div>
     </div>
     <div class="painel">
       <span>Pessoas: <b id="pessoas">0</b></span>
@@ -99,6 +101,13 @@
       <button id="trocar">Trocar câmera</button>
       <button id="baixar">Baixar log (CSV)</button>
       <button id="baixarObj">Baixar objetos (CSV)</button>
+    </div>
+    <div class="controles">
+      <button id="gravar">● Gravar</button>
+      <label class="dica" style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="gravarAlertas" checked> Gravar automaticamente nos alertas
+      </label>
+      <span id="gravStatus" class="dica" style="margin:0"></span>
     </div>
     <div id="dica" class="dica"></div>
     <details class="dica" style="margin-top:10px">
@@ -342,6 +351,7 @@ async function loop() {
   tPrev = agora;
   $("pessoas").textContent = pessoas;
   $("veiculos").textContent = veiculos;
+  if (alertas.length) aoAlerta(alertas);
   $("alerta").style.display = alertas.length ? "block" : "none";
   $("alerta").textContent = "ALERTA: " + alertas.join(" | ") + (camAtiva ? ` (Câmera ${camAtiva.id})` : "");
   if (alertas.length && camAtiva) {
@@ -360,6 +370,92 @@ async function loop() {
     ultimoLog = agora;
   }
   requestAnimationFrame(loop);
+}
+
+/* ===================== Gravação (central) ===================== */
+// Grava o vídeo com as caixas de detecção, IDs, data/hora e câmera impressos na imagem.
+const POS_ALERTA_MS = 10000;   // continua gravando 10 s após o último alerta
+const MAX_GRAVACAO_MS = 10 * 60 * 1000; // divide arquivos longos a cada 10 min
+let gravando = false, gravador = null, pedacos = [], motivoGrav = "", inicioGrav = 0;
+let ultimoAlertaMs = 0, timerComp = null, alertasGrav = new Set();
+const compCanvas = document.createElement("canvas");
+const compCtx = compCanvas.getContext("2d");
+
+function tipoVideo() {
+  const tipos = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  return tipos.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+}
+
+function desenharComposicao() {
+  if (!video.videoWidth) return;
+  if (compCanvas.width !== video.videoWidth) { compCanvas.width = video.videoWidth; compCanvas.height = video.videoHeight; }
+  const W = compCanvas.width, H = compCanvas.height;
+  compCtx.drawImage(video, 0, 0, W, H);
+  compCtx.drawImage(canvas, 0, 0, W, H);
+  const txt = `${new Date().toLocaleString("pt-BR")}  ·  Câmera ${camAtiva?.id ?? "-"}` +
+    (posAtual ? `  ·  ${posAtual.lat.toFixed(5)}, ${posAtual.lng.toFixed(5)}` : "");
+  const fs = Math.max(14, Math.round(H / 32));
+  compCtx.font = `${fs}px system-ui`;
+  const tw = compCtx.measureText(txt).width + 16;
+  compCtx.fillStyle = "rgba(0,0,0,.6)"; compCtx.fillRect(0, H - fs - 14, tw, fs + 14);
+  compCtx.fillStyle = "#fff"; compCtx.fillText(txt, 8, H - 10);
+  const seg = Math.floor((performance.now() - inicioGrav) / 1000);
+  $("recBadge").textContent = `● REC ${String(Math.floor(seg / 60)).padStart(2, "0")}:${String(seg % 60).padStart(2, "0")}`;
+  if (performance.now() - inicioGrav > MAX_GRAVACAO_MS) { const m = motivoGrav; pararGravacao(); iniciarGravacao(m); }
+  if (motivoGrav === "alerta" && performance.now() - ultimoAlertaMs > POS_ALERTA_MS) pararGravacao();
+}
+
+function iniciarGravacao(motivo) {
+  if (gravando) return;
+  if (!video.srcObject || !video.videoWidth) { $("gravStatus").textContent = "Sem imagem para gravar"; return; }
+  const tipo = tipoVideo();
+  if (!tipo) { $("gravStatus").textContent = "Este navegador não grava vídeo"; return; }
+  compCanvas.width = video.videoWidth; compCanvas.height = video.videoHeight;
+  desenharComposicaoInicial();
+  const fluxo = compCanvas.captureStream(15);
+  pedacos = [];
+  try { gravador = new MediaRecorder(fluxo, { mimeType:tipo, videoBitsPerSecond:2500000 }); }
+  catch (e) { $("gravStatus").textContent = "Erro ao gravar: " + e.message; return; }
+  gravador.ondataavailable = e => { if (e.data.size) pedacos.push(e.data); };
+  const meta = { motivo, camera:camAtiva?.id ?? "", inicio:new Date(), tipo };
+  gravador.onstop = () => salvarGravacao(meta);
+  gravador.start(1000);
+  gravando = true; motivoGrav = motivo; inicioGrav = performance.now(); alertasGrav = new Set();
+  timerComp = setInterval(desenharComposicao, 1000 / 15);
+  $("recBadge").style.display = "block";
+  $("gravar").textContent = "■ Parar gravação"; $("gravar").classList.add("ativo");
+  $("gravStatus").textContent = motivo === "alerta" ? "Gravando alerta…" : "Gravando…";
+}
+
+function desenharComposicaoInicial() { try { desenharComposicao(); } catch {} }
+
+function pararGravacao() {
+  if (!gravando) return;
+  gravando = false;
+  clearInterval(timerComp); timerComp = null;
+  try { gravador.stop(); } catch {}
+  $("recBadge").style.display = "none";
+  $("gravar").textContent = "● Gravar"; $("gravar").classList.remove("ativo");
+}
+
+function salvarGravacao(meta) {
+  const ext = meta.tipo.includes("mp4") ? "mp4" : "webm";
+  const blob = new Blob(pedacos, { type:meta.tipo.split(";")[0] });
+  const carimbo = meta.inicio.toISOString().slice(0,19).replace(/[:T]/g, "");
+  const extra = alertasGrav.size ? "_" + [...alertasGrav].join("-").normalize("NFD").replace(/[^A-Za-z-]/g, "") : "";
+  const nome = `anjo_cam${meta.camera || "x"}_${carimbo}_${meta.motivo}${extra}.${ext}`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = nome; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  log.push([new Date().toISOString(), modo, posAtual?.lat?.toFixed(6) ?? "", posAtual?.lng?.toFixed(6) ?? "",
+    meta.camera, "", "", "", "GRAVACAO:" + nome, ""]);
+  $("gravStatus").textContent = `Salvo: ${nome} (${(blob.size / 1048576).toFixed(1)} MB)`;
+}
+
+function aoAlerta(alertas) {
+  ultimoAlertaMs = performance.now();
+  if (gravando) { alertas.forEach(a => alertasGrav.add(a)); return; }
+  if ($("gravarAlertas").checked) { iniciarGravacao("alerta"); alertas.forEach(a => alertasGrav.add(a)); }
 }
 
 /* ===================== Rastreamento: um ID por objeto ===================== */
@@ -728,6 +824,9 @@ $("turnSalvar").onclick = async () => {
 };
 iceServers();
 $("baixarObj").onclick = baixarObjetos;
+$("gravar").onclick = () => gravando ? pararGravacao() : iniciarGravacao("manual");
+$("gravarAlertas").checked = lerCfg("gravarAlertas") !== "0";
+$("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas").checked ? "1" : "0");
 
 /* ===================== Início ===================== */
 $("dica").textContent = DICAS.sim;
