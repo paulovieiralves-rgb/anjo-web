@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v17</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v18</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -845,6 +845,10 @@ async function conectarPeer(id, aoAbrir) {
       : e.type === "peer-unavailable" ? "Central não encontrada — abra a Central no notebook primeiro"
       : "Erro de conexão: " + e.type;
     $("status").textContent = msg;
+    // celular: central fora do ar → continua tentando a cada 8 s até ela voltar
+    if (modo === "cel" && transmitindo && (e.type === "peer-unavailable" || e.type === "network" || e.type === "server-error" || e.type === "socket-error")) {
+      setTimeout(() => { if (transmitindo && performance.now() - ultimaReconexao > 7000) reconectar(); }, 8000);
+    }
   });
 }
 
@@ -969,7 +973,7 @@ $("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas"
 /* ===================== Atualização automática ===================== */
 // A cada minuto verifica version.json no GitHub. A central recarrega sozinha e reabre;
 // o celular mostra um aviso (recarregar exigiria nova permissão de câmera).
-const VERSAO = 17;
+const VERSAO = 18;
 async function verificarVersao() {
   try {
     const r = await fetch("version.json?t=" + Date.now(), { cache:"no-store" });
