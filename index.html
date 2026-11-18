@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v13</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v14</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -90,6 +90,9 @@
     <!-- Celular -->
     <div id="ctl-cel" class="controles hidden">
       <input id="codigoCel" placeholder="Código da central" value="paulo">
+      <label class="dica" style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="microfone" checked> Microfone
+      </label>
       <button id="celIniciar" class="primary">Iniciar e transmitir</button>
       <button id="celParar">Parar</button>
     </div>
@@ -113,6 +116,7 @@
       <label class="dica" style="display:flex;align-items:center;gap:6px;margin:0">
         <input type="checkbox" id="gravarAlertas" checked> Gravar automaticamente nos alertas
       </label>
+      <button id="som" class="hidden">🔇 Som desligado</button>
       <span id="gravStatus" class="dica" style="margin:0"></span>
     </div>
     <div id="dica" class="dica"></div>
@@ -312,7 +316,8 @@ async function abrirCameraLocal() {
   pararStream();
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false
+      video: { facingMode: facing, width:{ ideal:1280 }, height:{ ideal:720 } },
+      audio: (modo === "cel" && $("microfone").checked) ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false
     });
   } catch (e) { $("status").textContent = "Sem acesso à câmera: " + e.message; return false; }
   video.srcObject = stream;
@@ -457,8 +462,10 @@ let ultimoAlertaMs = 0, timerComp = null, alertasGrav = new Set();
 const compCanvas = document.createElement("canvas");
 const compCtx = compCanvas.getContext("2d");
 
-function tipoVideo() {
-  const tipos = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+function tipoVideo(comAudio) {
+  const tipos = comAudio
+    ? ["video/mp4;codecs=avc1,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+    : ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
   return tipos.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
 }
 
@@ -484,11 +491,15 @@ function desenharComposicao() {
 function iniciarGravacao(motivo) {
   if (gravando) return;
   if (!video.srcObject || !video.videoWidth) { $("gravStatus").textContent = "Sem imagem para gravar"; return; }
-  const tipo = tipoVideo();
+  const temAudio = !!(video.srcObject?.getAudioTracks?.().length);
+  const tipo = tipoVideo(temAudio);
   if (!tipo) { $("gravStatus").textContent = "Este navegador não grava vídeo"; return; }
   compCanvas.width = video.videoWidth; compCanvas.height = video.videoHeight;
   desenharComposicaoInicial();
   const fluxo = compCanvas.captureStream(15);
+  // inclui o áudio recebido do celular (se houver)
+  const faixasAudio = (video.srcObject && video.srcObject.getAudioTracks) ? video.srcObject.getAudioTracks() : [];
+  faixasAudio.forEach(t => fluxo.addTrack(t));
   pedacos = [];
   try { gravador = new MediaRecorder(fluxo, { mimeType:tipo, videoBitsPerSecond:2500000 }); }
   catch (e) { $("gravStatus").textContent = "Erro ao gravar: " + e.message; return; }
@@ -751,7 +762,8 @@ function abrirCentral() {
       chamadaCentral = call; statsAnt = null;
       call.answer();
       call.on("stream", s => {
-        video.srcObject = s; video.play().catch(() => {});
+        video.srcObject = s; video.muted = !somCentral; video.play().catch(() => {});
+        $("som").classList.toggle("hidden", !s.getAudioTracks().length);
         $("status").textContent = "Recebendo imagem do celular";
         iniciarDeteccao();
       });
@@ -906,6 +918,17 @@ $("turnSalvar").onclick = async () => {
 };
 iceServers();
 $("baixarObj").onclick = baixarObjetos;
+let somCentral = false;
+$("som").onclick = () => {
+  somCentral = !somCentral; video.muted = !somCentral;
+  if (somCentral) video.play().catch(() => {});
+  $("som").textContent = somCentral ? "🔊 Som ligado" : "🔇 Som desligado";
+  $("som").classList.toggle("ativo", somCentral);
+};
+$("microfone").onchange = () => {
+  // liga/desliga o microfone durante a transmissão, sem reconectar
+  stream?.getAudioTracks().forEach(t => t.enabled = $("microfone").checked);
+};
 $("gravar").onclick = () => gravando ? pararGravacao() : iniciarGravacao("manual");
 $("gravarAlertas").checked = lerCfg("gravarAlertas") !== "0";
 $("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas").checked ? "1" : "0");
