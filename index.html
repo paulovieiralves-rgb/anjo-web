@@ -265,9 +265,11 @@ function novaPosicao(lat, lng, origemCel = false, acc = null) {
   if (acc !== null) $("gps").textContent = `±${Math.round(acc)} m`;
   if (posAtual) {
     const d = dist(posAtual, p);
-    const limiar = Math.max(MOV_MIN, (acc ?? 0) * 0.8);
-    if (d < limiar) { $("parado").textContent = "parado"; return; }   // oscilação: não move
-    $("parado").textContent = "em movimento";
+    if (acc !== null) {   // só posições do GPS real (a simulação não passa pelo filtro)
+      const limiar = Math.max(MOV_MIN, acc * 0.8);
+      if (d < limiar) { $("parado").textContent = "parado"; return; }   // oscilação: não move
+      $("parado").textContent = "em movimento";
+    }
     percorrido += d;
   }
   posAtual = p;
