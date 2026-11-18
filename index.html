@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v18</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v19</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -285,6 +285,7 @@ function novaPosicao(lat, lng, origemCel = false, acc = null) {
   if (!mapa.hasLayer(usuario)) usuario.addTo(mapa);
   usuario.setLatLng(p);
   trilha.addLatLng(p);
+  const pts = trilha.getLatLngs(); if (pts.length > 3000) trilha.setLatLngs(pts.slice(-2000));
   $("dist").textContent = `${Math.round(percorrido)} m`;
   if (seguir) mapa.setView(p, mapa.getZoom(), { animate:true });
   else if (!mapa.getBounds().pad(-0.2).contains(p)) mapa.panTo(p);
@@ -349,7 +350,8 @@ function iniciarDeteccao() {
 
 async function loop() {
   if (!detectando) return;
-  if (video.readyState < 2 || !video.videoWidth) { requestAnimationFrame(loop); return; }
+  if (video.readyState < 2 || !video.videoWidth) { setTimeout(loop, 250); return; }
+  const inicioQuadro = performance.now();
   if (canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
 
   const preds = await model.detect(video, 20, CONF);
@@ -406,7 +408,8 @@ async function loop() {
       Object.entries(contagem).map(([k, v]) => `${k}=${v}`).join(";"), alertas.join(";"), idsVisiveis]);
     ultimoLog = agora;
   }
-  requestAnimationFrame(loop);
+  // limita a ~8 análises por segundo (economiza memória e processador)
+  setTimeout(loop, Math.max(0, 125 - (performance.now() - inicioQuadro)));
 }
 
 /* ===================== Indicador de transmissão (tempo real) ===================== */
@@ -468,7 +471,11 @@ setInterval(monitorar, 1000);
 /* ===================== Gravação (central) ===================== */
 // Grava o vídeo com as caixas de detecção, IDs, data/hora e câmera impressos na imagem.
 const POS_ALERTA_MS = 10000;   // continua gravando 10 s após o último alerta
-const MAX_GRAVACAO_MS = 10 * 60 * 1000; // divide arquivos longos a cada 10 min
+const MAX_GRAVACAO_MS = 2 * 60 * 1000;  // divide arquivos a cada 2 min (limita o uso de memória)
+const MAX_ALERTA_MS = 60 * 1000;        // gravação de alerta dura no máximo 60 s
+const PAUSA_ALERTA_MS = 30 * 1000;      // depois, espera 30 s antes de gravar outro alerta
+const ALERTAS_QUE_GRAVAM = new Set(["OBJETO PERIGOSO", "AGLOMERAÇÃO", "FORA DA AREA"]); // engarrafamento só vai para o log
+let fimUltimoAlertaGrav = -1e9;
 let gravando = false, gravador = null, pedacos = [], motivoGrav = "", inicioGrav = 0;
 let ultimoAlertaMs = 0, timerComp = null, alertasGrav = new Set();
 const compCanvas = document.createElement("canvas");
@@ -497,7 +504,9 @@ function desenharComposicao() {
   const seg = Math.floor((performance.now() - inicioGrav) / 1000);
   $("recBadge").textContent = `● REC ${String(Math.floor(seg / 60)).padStart(2, "0")}:${String(seg % 60).padStart(2, "0")}`;
   if (performance.now() - inicioGrav > MAX_GRAVACAO_MS) { const m = motivoGrav; pararGravacao(); iniciarGravacao(m); }
-  if (motivoGrav === "alerta" && performance.now() - ultimoAlertaMs > POS_ALERTA_MS) pararGravacao();
+  if (motivoGrav === "alerta" && (performance.now() - ultimoAlertaMs > POS_ALERTA_MS || performance.now() - inicioGrav > MAX_ALERTA_MS)) {
+    fimUltimoAlertaGrav = performance.now(); pararGravacao();
+  }
 }
 
 function iniciarGravacao(motivo) {
@@ -513,7 +522,7 @@ function iniciarGravacao(motivo) {
   const faixasAudio = (video.srcObject && video.srcObject.getAudioTracks) ? video.srcObject.getAudioTracks() : [];
   faixasAudio.forEach(t => fluxo.addTrack(t));
   pedacos = [];
-  try { gravador = new MediaRecorder(fluxo, { mimeType:tipo, videoBitsPerSecond:2500000 }); }
+  try { gravador = new MediaRecorder(fluxo, { mimeType:tipo, videoBitsPerSecond:1000000 }); }
   catch (e) { $("gravStatus").textContent = "Erro ao gravar: " + e.message; return; }
   gravador.ondataavailable = e => { if (e.data.size) pedacos.push(e.data); };
   const meta = { motivo, camera:camAtiva?.id ?? "", inicio:new Date(), tipo };
@@ -540,6 +549,7 @@ function pararGravacao() {
 function salvarGravacao(meta) {
   const ext = meta.tipo.includes("mp4") ? "mp4" : "webm";
   const blob = new Blob(pedacos, { type:meta.tipo.split(";")[0] });
+  pedacos = [];   // libera a memória
   const z = n => String(n).padStart(2, "0"), d = meta.inicio;
   const carimbo = `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
   const extra = alertasGrav.size ? "_" + [...alertasGrav].join("-").normalize("NFD").replace(/[^A-Za-z-]/g, "") : "";
@@ -553,9 +563,13 @@ function salvarGravacao(meta) {
 }
 
 function aoAlerta(alertas) {
-  ultimoAlertaMs = performance.now();
-  if (gravando) { alertas.forEach(a => alertasGrav.add(a)); return; }
-  if ($("gravarAlertas").checked) { iniciarGravacao("alerta"); alertas.forEach(a => alertasGrav.add(a)); }
+  const relevantes = alertas.filter(a => ALERTAS_QUE_GRAVAM.has(a));
+  if (!relevantes.length) return;
+  const agora = performance.now();
+  ultimoAlertaMs = agora;
+  if (gravando) { relevantes.forEach(a => alertasGrav.add(a)); return; }
+  if (!$("gravarAlertas").checked || agora - fimUltimoAlertaGrav < PAUSA_ALERTA_MS) return;
+  iniciarGravacao("alerta"); relevantes.forEach(a => alertasGrav.add(a));
 }
 
 /* ===================== Rastreamento: um ID por objeto ===================== */
@@ -954,6 +968,11 @@ $("turnSalvar").onclick = async () => {
 };
 iceServers();
 $("baixarObj").onclick = baixarObjetos;
+// Limita o crescimento dos registros em memória (sessões longas)
+setInterval(() => {
+  if (log.length > 20000) log.splice(1, log.length - 15000);
+  if (objetosLog.length > 20000) objetosLog.splice(1, objetosLog.length - 15000);
+}, 60000);
 let somCentral = false;
 $("som").onclick = () => {
   somCentral = !somCentral; video.muted = !somCentral;
@@ -973,7 +992,7 @@ $("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas"
 /* ===================== Atualização automática ===================== */
 // A cada minuto verifica version.json no GitHub. A central recarrega sozinha e reabre;
 // o celular mostra um aviso (recarregar exigiria nova permissão de câmera).
-const VERSAO = 18;
+const VERSAO = 19;
 async function verificarVersao() {
   try {
     const r = await fetch("version.json?t=" + Date.now(), { cache:"no-store" });
