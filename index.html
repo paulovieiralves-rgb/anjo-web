@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v19</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v20</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -362,6 +362,9 @@ async function loop() {
   for (const p of preds) {
     if (!(p.class in CLASSES_INTERESSE)) continue;
     contagem[p.class] = (contagem[p.class] || 0) + 1;
+    // descarta objetos muito pequenos (distantes) e de baixa confiança — reduz contagem falsa
+    if (p.bbox[3] < video.videoHeight * ALTURA_MIN) continue;
+    if (p.score < (p.class === "person" ? 0.45 : 0.5)) continue;
     dets.push({ classe:p.class, bbox:p.bbox, score:p.score });
   }
   atualizarRastreamento(dets, tAgora);
@@ -370,9 +373,9 @@ async function loop() {
   for (const t of tracks) {
     if (t.ultimo !== tAgora) continue;
     const [x, y, w, h] = t.bbox;
-    const cor = CLASSES_ALERTA.has(t.classe) ? "#ef4444" : (t.id ? "#22c55e" : "#9ca3af");
+    const cor = CLASSES_ALERTA.has(t.classe) ? "#ef4444" : t.suspeito ? "#f97316" : (t.id ? "#22c55e" : "#9ca3af");
     ctx.strokeStyle = cor; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
-    const rotulo = `${CLASSES_INTERESSE[t.classe]} ${t.id ? "#" + t.id : "…"}`;
+    const rotulo = `${CLASSES_INTERESSE[t.classe]} ${t.id ? "#" + t.id : "…"}${t.suspeito ? " · " + t.suspeito : ""}`;
     ctx.font = "16px system-ui";
     const tw = ctx.measureText(rotulo).width + 8;
     ctx.fillStyle = cor; ctx.fillRect(x, Math.max(y - 20, 0), tw, 20);
@@ -384,6 +387,8 @@ async function loop() {
   if ([...CLASSES_ALERTA].some(c => contagem[c])) alertas.push("OBJETO PERIGOSO");
   if (pessoas >= LIMIAR_PESSOAS) alertas.push("AGLOMERAÇÃO");
   if (veiculos >= LIMIAR_VEICULOS) alertas.push("ENGARRAFAMENTO");
+  const comps = analisarComportamentos(tAgora);
+  [...new Set(comps.map(c => c.tipo))].forEach(t => alertas.push(t));
 
   const agora = performance.now();
   $("fps").textContent = (1000 / Math.max(agora - tPrev, 1)).toFixed(1);
@@ -392,6 +397,8 @@ async function loop() {
   $("veiculos").textContent = veiculos;
   if (alertas.length) aoAlerta(alertas);
   $("alerta").style.display = alertas.length ? "block" : "none";
+  const soAtencao = alertas.length && alertas.every(x => ["PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO"].includes(x));
+  $("alerta").style.background = soAtencao ? "#a16207" : "";
   $("alerta").textContent = "ALERTA: " + alertas.join(" | ") + (camAtiva ? ` (Câmera ${camAtiva.id})` : "");
   if (alertas.length && camAtiva) {
     const pin = document.getElementById("pin" + camAtiva.id);
@@ -468,6 +475,117 @@ async function monitorar() {
 }
 setInterval(monitorar, 1000);
 
+
+/* ===================== Comportamentos suspeitos ===================== */
+// Baseados SOMENTE em movimento e posição — nunca em aparência (roupa, pele, idade etc.).
+// Medidas relativas à altura da pessoa na imagem, para valer perto ou longe da câmera.
+const COMP = {
+  PERMANENCIA_S: 90,       // parado no mesmo ponto por mais de 90 s
+  PERMANENCIA_DESL: 1.0,   // deslocamento máx. (em alturas de corpo) nos últimos 30 s
+  CORRIDA_VEL: 2.0,        // alturas de corpo por segundo
+  SUBITA_NOVOS: 5,         // pessoas novas em 8 s
+  SUBITA_TOTAL: 6,
+  CERCO_PESSOAS: 3,        // pessoas que se aproximam de uma mesma pessoa
+  CAIDA_RAZAO: 1.3,        // largura/altura da caixa
+  CAIDA_S: 3,
+  GARUPA_S: 10
+};
+const COMP_VERMELHOS = new Set(["CORRERIA", "AGLOMERAÇÃO SÚBITA", "CERCO", "PESSOA CAÍDA"]);
+let compAtivos = [];
+
+function cameraParada() {
+  // com a câmera andando (celular em movimento), velocidades na imagem não são confiáveis
+  return modo === "sim" || $("parado").textContent !== "em movimento";
+}
+function velocidade(t, janelaMs, agora) {
+  const h = t.hist.filter(p => agora - p.t <= janelaMs);
+  if (h.length < 3) return 0;
+  const a = h[0], b = h[h.length - 1], dt = (b.t - a.t) / 1000;
+  if (dt < 0.8) return 0;
+  const alt = h.reduce((s, p) => s + p.h, 0) / h.length;
+  return Math.hypot(b.cx - a.cx, b.cy - a.cy) / alt / dt;
+}
+function posEm(t, momento) {   // posição mais próxima de um instante passado
+  let melhor = null;
+  for (const p of t.hist) if (p.t <= momento) melhor = p;
+  return melhor;
+}
+
+function analisarComportamentos(agora) {
+  const achados = [];
+  const pessoas = tracks.filter(t => t.classe === "person" && t.id && agora - t.ultimo < 500);
+  const parada = cameraParada();
+  pessoas.forEach(t => t.suspeito = null);
+
+  // 1. Permanência prolongada
+  if (parada) pessoas.forEach(t => {
+    if ((agora - t.primeiro) / 1000 < COMP.PERMANENCIA_S) return;
+    const ant = posEm(t, agora - 30000), at = t.hist[t.hist.length - 1];
+    if (ant && at && Math.hypot(at.cx - ant.cx, at.cy - ant.cy) / at.h < COMP.PERMANENCIA_DESL) {
+      t.suspeito = "permanência"; achados.push({ tipo:"PERMANÊNCIA PROLONGADA", id:t.id });
+    }
+  });
+
+  // 2. Corrida / correria
+  if (parada) {
+    const correndo = pessoas.filter(t => velocidade(t, 1500, agora) > COMP.CORRIDA_VEL);
+    correndo.forEach(t => t.suspeito = "corrida");
+    if (correndo.length >= 2) achados.push({ tipo:"CORRERIA", ids:correndo.map(t => t.id) });
+    else if (correndo.length === 1) achados.push({ tipo:"CORRIDA", id:correndo[0].id });
+  }
+
+  // 3. Aglomeração súbita (padrão de arrastão)
+  const novos = pessoas.filter(t => agora - t.primeiro < 8000);
+  if (novos.length >= COMP.SUBITA_NOVOS && pessoas.length >= COMP.SUBITA_TOTAL) {
+    novos.forEach(t => t.suspeito = "aglomeração súbita");
+    achados.push({ tipo:"AGLOMERAÇÃO SÚBITA", ids:novos.map(t => t.id) });
+  }
+
+  // 4. Cerco: várias pessoas convergindo rapidamente para a mesma pessoa
+  pessoas.forEach(alvo => {
+    const at = alvo.hist[alvo.hist.length - 1]; if (!at) return;
+    const cercando = pessoas.filter(o => {
+      if (o === alvo) return false;
+      const oa = o.hist[o.hist.length - 1], oAnt = posEm(o, agora - 5000), alvoAnt = posEm(alvo, agora - 5000);
+      if (!oa || !oAnt || !alvoAnt) return false;
+      const dAgora = Math.hypot(oa.cx - at.cx, oa.cy - at.cy) / at.h;
+      const dAntes = Math.hypot(oAnt.cx - alvoAnt.cx, oAnt.cy - alvoAnt.cy) / alvoAnt.h;
+      return dAgora < 1.2 && dAntes > 2.0;
+    });
+    if (cercando.length >= COMP.CERCO_PESSOAS) {
+      alvo.suspeito = "cercado"; cercando.forEach(o => o.suspeito = "cerco");
+      achados.push({ tipo:"CERCO", id:alvo.id, ids:cercando.map(o => o.id) });
+    }
+  });
+
+  // 5. Pessoa caída
+  pessoas.forEach(t => {
+    const deitada = t.bbox[2] > t.bbox[3] * COMP.CAIDA_RAZAO;
+    if (deitada) { t.caidaDesde = t.caidaDesde || agora; } else t.caidaDesde = null;
+    if (t.caidaDesde && (agora - t.caidaDesde) / 1000 > COMP.CAIDA_S) {
+      t.suspeito = "caída"; achados.push({ tipo:"PESSOA CAÍDA", id:t.id });
+    }
+  });
+
+  // 6. Moto com garupa parada ou devagar
+  tracks.filter(t => t.classe === "motorcycle" && t.id && agora - t.ultimo < 500).forEach(m => {
+    const [mx] = centro(m.bbox);
+    const sobre = pessoas.filter(p => {
+      const [px, py] = centro(p.bbox);
+      return Math.abs(px - mx) < m.bbox[2] * 0.6 && py < m.bbox[1] + m.bbox[3] && py > m.bbox[1] - p.bbox[3];
+    });
+    const lenta = !parada ? false : velocidade(m, 3000, agora) < 0.3;
+    if (sobre.length >= 2 && lenta) { m.garupaDesde = m.garupaDesde || agora; } else m.garupaDesde = null;
+    if (m.garupaDesde && (agora - m.garupaDesde) / 1000 > COMP.GARUPA_S) {
+      m.suspeito = "garupa"; sobre.forEach(p => p.suspeito = "garupa");
+      achados.push({ tipo:"MOTO COM GARUPA", id:m.id });
+    }
+  });
+
+  compAtivos = achados;
+  return achados;
+}
+
 /* ===================== Gravação (central) ===================== */
 // Grava o vídeo com as caixas de detecção, IDs, data/hora e câmera impressos na imagem.
 const POS_ALERTA_MS = 10000;   // continua gravando 10 s após o último alerta
@@ -476,6 +594,7 @@ const MAX_ALERTA_MS = 60 * 1000;        // gravação de alerta dura no máximo 
 const PAUSA_ALERTA_MS = 30 * 1000;      // depois, espera 30 s antes de gravar outro alerta
 const ALERTAS_QUE_GRAVAM = new Set(["OBJETO PERIGOSO", "AGLOMERAÇÃO", "FORA DA AREA"]); // engarrafamento só vai para o log
 let fimUltimoAlertaGrav = -1e9;
+COMP_VERMELHOS.forEach(a => ALERTAS_QUE_GRAVAM.add(a));
 let gravando = false, gravador = null, pedacos = [], motivoGrav = "", inicioGrav = 0;
 let ultimoAlertaMs = 0, timerComp = null, alertasGrav = new Set();
 const compCanvas = document.createElement("canvas");
@@ -573,10 +692,15 @@ function aoAlerta(alertas) {
 }
 
 /* ===================== Rastreamento: um ID por objeto ===================== */
-const CONFIRMA_QUADROS = 3;   // objeto precisa aparecer em 3 quadros para ganhar ID (evita falsos positivos)
-const PERDA_MS = 1500;        // some por mais de 1,5 s = objeto encerrado
-let tracks = [], proxId = 1, unicos = {};
+const CONFIRMA_QUADROS = 5;   // precisa aparecer em 5 análises (~0,6 s) para ganhar ID
+const PERDA_MS = 2000;        // some por mais de 2 s = sai da tela (mas pode ser reidentificado)
+const REID_MS = 6000;         // reaparece em até 6 s perto de onde sumiu = mesmo ID
+const ALTURA_MIN = 0.05;      // ignora objetos com menos de 5% da altura da imagem
+const HIST_MS = 35000;        // histórico de posições para análise de comportamento
+let tracks = [], perdidos = [], proxId = 1, unicos = {};
 const objetosLog = [["id","classe","primeira_vez","ultima_vez","segundos_visivel","camera","lat","lng"]];
+
+const centro = b => [b[0] + b[2] / 2, b[1] + b[3] / 2];
 
 function iou(a, b) {
   const x1 = Math.max(a[0], b[0]), y1 = Math.max(a[1], b[1]);
@@ -585,40 +709,75 @@ function iou(a, b) {
   return inter / (a[2] * a[3] + b[2] * b[3] - inter || 1);
 }
 
-function semelhanca(t, d) {
+// posição prevista pela velocidade recente (ajuda quando a câmera ou o objeto se movem)
+function prever(t, agora) {
+  const dt = Math.min((agora - t.ultimo) / 1000, 1.5);
+  const [vx, vy] = t.vel || [0, 0];
+  return [t.bbox[0] + vx * dt, t.bbox[1] + vy * dt, t.bbox[2], t.bbox[3]];
+}
+
+function semelhanca(t, d, agora) {
   if (t.classe !== d.classe) return 0;
-  const v = iou(t.bbox, d.bbox);
-  if (v > 0.2) return v;
-  // Câmera em movimento: aceita também quando os centros estão próximos
-  const cx = (b) => [b[0] + b[2] / 2, b[1] + b[3] / 2];
-  const [ax, ay] = cx(t.bbox), [bx, by] = cx(d.bbox);
-  const lim = 0.5 * Math.sqrt(t.bbox[2] * t.bbox[3]);
-  return Math.hypot(ax - bx, ay - by) < lim ? 0.1 : 0;
+  const pb = prever(t, agora);
+  const v = iou(pb, d.bbox);
+  if (v > 0.15) return v;
+  const [ax, ay] = centro(pb), [bx, by] = centro(d.bbox);
+  const escala = Math.sqrt(pb[2] * pb[3]);
+  const razao = (d.bbox[2] * d.bbox[3]) / (pb[2] * pb[3] || 1);
+  if (razao < 0.4 || razao > 2.5) return 0;
+  // raio de busca: maior para objetos ainda sem velocidade conhecida (ex.: alguém que começa a correr)
+  const raio = t.vel ? Math.max(0.7 * escala, 0.8 * pb[3]) : Math.max(0.9 * escala, 1.1 * pb[3]);
+  return Math.hypot(ax - bx, ay - by) < raio ? 0.1 : 0;
+}
+
+function atualizarTrack(t, d, agora) {
+  const [cx0, cy0] = centro(t.bbox), [cx1, cy1] = centro(d.bbox);
+  const dt = Math.max((agora - t.ultimo) / 1000, 0.05);
+  const vNova = [(cx1 - cx0) / dt, (cy1 - cy0) / dt];
+  t.vel = t.vel ? [t.vel[0] * 0.6 + vNova[0] * 0.4, t.vel[1] * 0.6 + vNova[1] * 0.4] : vNova;
+  t.bbox = d.bbox; t.ultimo = agora; t.ultimoISO = new Date().toISOString(); t.quadros++;
+  t.scoreSoma = (t.scoreSoma || 0) + d.score;
+  const ult = t.hist[t.hist.length - 1];
+  if (!ult || agora - ult.t >= 250) t.hist.push({ t:agora, cx:cx1, cy:cy1, w:d.bbox[2], h:d.bbox[3] });
+  while (t.hist.length && agora - t.hist[0].t > HIST_MS) t.hist.shift();
+  if (!t.id && t.quadros >= CONFIRMA_QUADROS && t.scoreSoma / t.quadros >= 0.5) confirmar(t);
 }
 
 function atualizarRastreamento(dets, agora) {
   const pares = [];
   tracks.forEach((t, ti) => dets.forEach((d, di) => {
-    const s = semelhanca(t, d); if (s > 0) pares.push([s, ti, di]);
+    const sc = semelhanca(t, d, agora); if (sc > 0) pares.push([sc, ti, di]);
   }));
   pares.sort((a, b) => b[0] - a[0]);
   const tUsado = new Set(), dUsado = new Set();
   for (const [, ti, di] of pares) {
     if (tUsado.has(ti) || dUsado.has(di)) continue;
     tUsado.add(ti); dUsado.add(di);
-    const t = tracks[ti];
-    t.bbox = dets[di].bbox; t.ultimo = agora; t.ultimoISO = new Date().toISOString(); t.quadros++;
-    if (!t.id && t.quadros >= CONFIRMA_QUADROS) confirmar(t);
+    atualizarTrack(tracks[ti], dets[di], agora);
   }
   dets.forEach((d, di) => {
     if (dUsado.has(di)) return;
-    tracks.push({ classe:d.classe, bbox:d.bbox, quadros:1, id:null,
+    // reidentificação: objeto que sumiu há pouco perto daqui recupera o mesmo ID
+    let melhor = -1, melhorS = 0;
+    perdidos.forEach((t, k) => { const sc = semelhanca(t, d, agora); if (sc > melhorS) { melhorS = sc; melhor = k; } });
+    if (melhor >= 0) {
+      const t = perdidos.splice(melhor, 1)[0];
+      atualizarTrack(t, d, agora); tracks.push(t); return;
+    }
+    const [cx, cy] = centro(d.bbox);
+    tracks.push({ classe:d.classe, bbox:d.bbox, quadros:1, id:null, scoreSoma:d.score, vel:null,
+      hist:[{ t:agora, cx, cy, w:d.bbox[2], h:d.bbox[3] }],
       primeiro:agora, ultimo:agora, primeiroISO:new Date().toISOString(), ultimoISO:new Date().toISOString(),
       camera:camAtiva?.id ?? "", lat:posAtual?.lat, lng:posAtual?.lng });
   });
   tracks = tracks.filter(t => {
     if (agora - t.ultimo <= PERDA_MS) return true;
-    if (t.id) registrarObjeto(t);
+    if (t.id) perdidos.push(t);   // guarda para possível reidentificação
+    return false;
+  });
+  perdidos = perdidos.filter(t => {
+    if (agora - t.ultimo <= REID_MS) return true;
+    registrarObjeto(t);
     return false;
   });
 }
@@ -638,7 +797,7 @@ function registrarObjeto(t) {
 }
 
 function resetRastreamento() {
-  tracks = []; proxId = 1; unicos = {};
+  tracks = []; perdidos = []; proxId = 1; unicos = {};
   objetosLog.length = 1;
   $("unicos").textContent = "0 pessoas · 0 veículos";
 }
@@ -900,7 +1059,7 @@ function baixarCSV(linhas, prefixo) {
 
 function baixarObjetos() {
   // inclui os objetos ainda visíveis
-  const ativos = tracks.filter(t => t.id).map(t => [t.id, CLASSES_INTERESSE[t.classe], t.primeiroISO, t.ultimoISO,
+  const ativos = tracks.concat(perdidos).filter(t => t.id).map(t => [t.id, CLASSES_INTERESSE[t.classe], t.primeiroISO, t.ultimoISO,
     ((t.ultimo - t.primeiro) / 1000).toFixed(1), t.camera, t.lat?.toFixed(6) ?? "", t.lng?.toFixed(6) ?? ""]);
   baixarCSV(objetosLog.concat(ativos), "anjo_objetos");
 }
@@ -992,7 +1151,7 @@ $("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas"
 /* ===================== Atualização automática ===================== */
 // A cada minuto verifica version.json no GitHub. A central recarrega sozinha e reabre;
 // o celular mostra um aviso (recarregar exigiria nova permissão de câmera).
-const VERSAO = 19;
+const VERSAO = 20;
 async function verificarVersao() {
   try {
     const r = await fetch("version.json?t=" + Date.now(), { cache:"no-store" });
