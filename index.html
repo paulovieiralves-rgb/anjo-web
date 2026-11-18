@@ -38,7 +38,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v10</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v11</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -62,7 +62,8 @@
       <span>Veículos: <b id="veiculos">0</b></span>
       <span>Únicos: <b id="unicos">0 pessoas · 0 veículos</b></span>
       <span>Câmeras: <b id="ncams">0</b></span>
-      <span>Percorrido: <b id="dist">0 m</b></span>
+      <span>Percorrido: <b id="dist">0 m</b> <small id="parado" style="color:#8a96a3"></small></span>
+      <span>GPS: <b id="gps">–</b></span>
       <span>FPS: <b id="fps">0</b></span>
     </div>
     <div id="alerta" class="alerta"></div>
@@ -252,9 +253,23 @@ function camMaisProxima(p) {
 }
 
 /* ===================== Posição (comum a todos os modos) ===================== */
-function novaPosicao(lat, lng, origemCel = false) {
+/* Filtro de GPS: ignora a oscilação do sinal com o aparelho parado.
+   Só conta deslocamento quando a mudança é maior que a margem de erro do GPS. */
+const PRECISAO_MAX = 35;   // leituras com erro maior que 35 m são descartadas
+const MOV_MIN = 8;         // deslocamento mínimo considerado (m)
+function novaPosicao(lat, lng, origemCel = false, acc = null) {
   const p = L.latLng(lat, lng);
-  if (posAtual) percorrido += dist(posAtual, p);
+  if (acc !== null && acc > PRECISAO_MAX && posAtual) {
+    $("gps").textContent = `fraco (±${Math.round(acc)} m)`; return;
+  }
+  if (acc !== null) $("gps").textContent = `±${Math.round(acc)} m`;
+  if (posAtual) {
+    const d = dist(posAtual, p);
+    const limiar = Math.max(MOV_MIN, (acc ?? 0) * 0.8);
+    if (d < limiar) { $("parado").textContent = "parado"; return; }   // oscilação: não move
+    $("parado").textContent = "em movimento";
+    percorrido += d;
+  }
   posAtual = p;
   if (!mapa.hasLayer(usuario)) usuario.addTo(mapa);
   usuario.setLatLng(p);
@@ -591,7 +606,7 @@ async function iniciarCelular() {
     pos => {
       const { latitude:lat, longitude:lng, accuracy } = pos.coords;
       if (!posAtual) mapa.setView([lat, lng], 17);
-      novaPosicao(lat, lng, true);
+      novaPosicao(lat, lng, true, accuracy);
       enviar({ tipo:"pos", lat, lng, acc:accuracy });
     },
     e => $("status").textContent = "Erro de GPS: " + e.message,
@@ -679,7 +694,7 @@ function abrirCentral() {
       conn = c;
       c.on("open", () => { if (geoPontos.length >= 3) enviar({ tipo:"geo", pontos:geoPontos.map(q => [q.lat, q.lng]) }); });
       c.on("data", d => {
-        if (d.tipo === "pos") novaPosicao(d.lat, d.lng);
+        if (d.tipo === "pos") novaPosicao(d.lat, d.lng, false, d.acc ?? null);
         if (d.tipo === "pausa") $("status").textContent = "Celular em segundo plano — transmissão pausada";
         if (d.tipo === "retomada") $("status").textContent = "Celular voltou — reconectando imagem…";
         if (d.tipo === "cam") { criarCamera(d.lat, d.lng, d.img, d.id); if (posAtual) ativarCamera(camMaisProxima(posAtual).cam); }
