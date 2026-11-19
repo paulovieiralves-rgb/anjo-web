@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v20</small></h1>
+  <h1>Anjo da Guarda <small style="font-size:12px;color:#8a96a3">v21</small></h1>
   <div class="abas">
     <button data-modo="sim" class="ativo">Simulação</button>
     <button data-modo="cel">Celular (câmera)</button>
@@ -95,6 +95,7 @@
       </label>
       <button id="celIniciar" class="primary">Iniciar e transmitir</button>
       <button id="celParar">Parar</button>
+      <button id="gravarCentral">⏺ Gravar na central: não</button>
     </div>
 
     <!-- Central -->
@@ -108,8 +109,10 @@
       <button id="geoDesenhar">Desenhar área</button>
       <button id="geoLimpar">Limpar área</button>
       <button id="trocar">Trocar câmera</button>
+      <button id="audioModo">🔊 Áudio: alertas e resumo</button>
       <button id="baixar">Baixar log (CSV)</button>
       <button id="baixarObj">Baixar objetos (CSV)</button>
+      <button id="baixarGpx">Baixar percurso (GPX)</button>
     </div>
     <div class="controles">
       <button id="gravar">● Gravar</button>
@@ -253,6 +256,7 @@ function ativarCamera(cam) {
   camAtiva = cam;
   document.getElementById("pin" + cam.id)?.classList.add("on");
   $("camLabel").textContent = `Câmera ${cam.id} · ao vivo`;
+  if (typeof anunciarCamera === "function") anunciarCamera(cam.id);
 }
 
 function camMaisProxima(p) {
@@ -269,7 +273,7 @@ const MOV_MIN = 8;         // deslocamento mínimo considerado (m)
 function novaPosicao(lat, lng, origemCel = false, acc = null) {
   const p = L.latLng(lat, lng);
   if (acc !== null && acc > PRECISAO_MAX && posAtual) {
-    $("gps").textContent = `fraco (±${Math.round(acc)} m)`; return;
+    $("gps").textContent = `fraco (±${Math.round(acc)} m)`; falar("GPS fraco.", 6, "gps", 120000); return;
   }
   if (acc !== null) $("gps").textContent = `±${Math.round(acc)} m`;
   if (posAtual) {
@@ -282,6 +286,7 @@ function novaPosicao(lat, lng, origemCel = false, acc = null) {
     percorrido += d;
   }
   posAtual = p;
+  percurso.push({ lat, lng, t:new Date().toISOString(), cam:camAtiva?.id ?? "" });
   if (!mapa.hasLayer(usuario)) usuario.addTo(mapa);
   usuario.setLatLng(p);
   trilha.addLatLng(p);
@@ -396,8 +401,9 @@ async function loop() {
   $("pessoas").textContent = pessoas;
   $("veiculos").textContent = veiculos;
   if (alertas.length) aoAlerta(alertas);
+  try { narrar(alertas, contagem, tAgora); } catch (e) { console.log("narração", e); }
   $("alerta").style.display = alertas.length ? "block" : "none";
-  const soAtencao = alertas.length && alertas.every(x => ["PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO"].includes(x));
+  const soAtencao = alertas.length && alertas.every(x => ["PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"].includes(x));
   $("alerta").style.background = soAtencao ? "#a16207" : "";
   $("alerta").textContent = "ALERTA: " + alertas.join(" | ") + (camAtiva ? ` (Câmera ${camAtiva.id})` : "");
   if (alertas.length && camAtiva) {
@@ -425,6 +431,10 @@ let ultimoAck = -1e9, ultimoHb = -1e9, ackInfo = {}, chamadaCentral = null, stat
 function setLink(estado, texto) {
   const el = $("link"); el.className = "link " + estado; el.textContent = texto; el.style.display = "block";
   if (modo === "cel" && estadoLinkAnt === "ok" && estado === "off" && navigator.vibrate) navigator.vibrate([300, 100, 300]);
+  if (estadoLinkAnt && estadoLinkAnt !== estado) {
+    if (estado === "ok") falar(modo === "central" ? "Recebendo imagem do celular." : "Central recebendo.", 6, "link", 5000);
+    if (estado === "off" && estadoLinkAnt === "ok") falar(modo === "central" ? "Atenção: celular desconectado." : "Atenção: conexão com a central perdida.", 2, "link", 5000);
+  }
   estadoLinkAnt = estado;
 }
 async function lerStats(pc, tipo) {
@@ -455,7 +465,7 @@ async function monitorar() {
         statsAnt = st; rota = st.rota;
       }
       const recebendo = fps > 0.5;
-      enviar({ tipo:"ack", recebendo, fps:Math.round(fps), kbps:Math.round(kbps), rota });
+      enviar({ tipo:"ack", recebendo, fps:Math.round(fps), kbps:Math.round(kbps), rota, gravando });
       if (recebendo) setLink("ok", `● Recebendo do celular — ${Math.round(fps)} fps · ${Math.round(kbps)} kbps${rota ? " · " + rota : ""}`);
       else if (agora - ultimoHb < 3500) setLink("warn", "● Celular conectado, mas sem imagem");
       else setLink("off", "● Nenhum celular transmitindo");
@@ -465,7 +475,7 @@ async function monitorar() {
       // só age se a central já confirmou alguma vez (centrais antigas, sem confirmação, não disparam o vigia)
       if (ultimoAck > 0 && agora - ultimoAck > 6000 && agora - ultimaReconexao > 8000 && document.visibilityState === "visible") reconectar();
       if (agora - ultimoAck < 3500 && ackInfo.recebendo)
-        setLink("ok", `● Central recebendo — ${ackInfo.fps} fps · ${ackInfo.kbps} kbps${ackInfo.rota ? " · " + ackInfo.rota : ""}`);
+        setLink("ok", `● Central recebendo — ${ackInfo.fps} fps · ${ackInfo.kbps} kbps${ackInfo.rota ? " · " + ackInfo.rota : ""}${ackInfo.gravando ? " · ⏺ gravando" : ""}`);
       else if (agora - ultimoAck < 3500) setLink("warn", "● Central conectada, mas sem imagem");
       else setLink("off", "● Central NÃO está recebendo");
     } else {
@@ -488,10 +498,13 @@ const COMP = {
   CERCO_PESSOAS: 3,        // pessoas que se aproximam de uma mesma pessoa
   CAIDA_RAZAO: 1.3,        // largura/altura da caixa
   CAIDA_S: 3,
-  GARUPA_S: 10
+  GARUPA_S: 10,
+  TRAVESSIA_LARGURA: 0.25, // pessoa cruza ao menos 25% da largura da imagem
+  TRAVESSIA_PESSOAS: 3,     // 3 ou mais travessias...
+  TRAVESSIA_JANELA_S: 20    // ...em 20 segundos
 };
 const COMP_VERMELHOS = new Set(["CORRERIA", "AGLOMERAÇÃO SÚBITA", "CERCO", "PESSOA CAÍDA"]);
-let compAtivos = [];
+let compAtivos = [], travessias = [];
 
 function cameraParada() {
   // com a câmera andando (celular em movimento), velocidades na imagem não são confiáveis
@@ -582,9 +595,116 @@ function analisarComportamentos(agora) {
     }
   });
 
+  // 7. Pedestres atravessando no trecho (deslocamento lateral pela imagem)
+  if (parada && video.videoWidth) {
+    pessoas.forEach(t => {
+      if (t.atravessou) return;
+      const h = t.hist.filter(q => agora - q.t <= 8000);
+      if (h.length < 3) return;
+      const dx = h[h.length - 1].cx - h[0].cx, dy = h[h.length - 1].cy - h[0].cy;
+      if (Math.abs(dx) >= video.videoWidth * COMP.TRAVESSIA_LARGURA && Math.abs(dx) > 2 * Math.abs(dy)) {
+        t.atravessou = true; travessias.push(agora);
+      }
+    });
+  }
+  while (travessias.length && agora - travessias[0] > COMP.TRAVESSIA_JANELA_S * 1000) travessias.shift();
+  if (travessias.length >= COMP.TRAVESSIA_PESSOAS) achados.push({ tipo:"PEDESTRES ATRAVESSANDO", n:travessias.length });
+
   compAtivos = achados;
   return achados;
 }
+
+
+/* ===================== Áudio: narração em português ===================== */
+// Prioridades: 1 alerta grave · 2 alerta de atenção · 3 troca de câmera · 4 mudança no ambiente
+//              5 resumo periódico · 6 estado do sistema. Cada tipo tem intervalo mínimo para não repetir.
+const MODOS_AUDIO = ["silencioso", "alertas", "resumo", "detalhado"];
+const ROTULO_AUDIO = { silencioso:"🔇 Áudio: silencioso", alertas:"🔊 Áudio: só alertas", resumo:"🔊 Áudio: alertas e resumo", detalhado:"🔊 Áudio: detalhado" };
+let modoAudio = (() => { try { return localStorage.getItem("modoAudio") || "resumo"; } catch { return "resumo"; } })();
+let velUsuario = 0, ultimaFala = -1e9, ultimoPorChave = {}, falando = 0, vozPt = null, audioLiberado = false;
+let camAnunciar = null, histPessoas = [], ruaVaziaDesde = null;
+const FALA_ALERTA = {
+  "OBJETO PERIGOSO":[1,"Atenção! Objeto perigoso detectado"], "AGLOMERAÇÃO":[1,"Atenção! Aglomeração"],
+  "CORRERIA":[1,"Atenção! Correria detectada"], "AGLOMERAÇÃO SÚBITA":[1,"Atenção! Aglomeração súbita"],
+  "CERCO":[1,"Atenção! Pessoa sendo cercada"], "PESSOA CAÍDA":[1,"Atenção! Pessoa caída"],
+  "FORA DA AREA":[1,"Atenção! Você saiu da área delimitada"],
+  "CORRIDA":[2,"Pessoa correndo"], "PERMANÊNCIA PROLONGADA":[2,"Pessoa parada há mais de um minuto e meio"],
+  "MOTO COM GARUPA":[2,"Moto com garupa parada"], "ENGARRAFAMENTO":[2,"Trânsito intenso"],
+  "PEDESTRES ATRAVESSANDO":[2,"Pedestres atravessando{onde} Reduza a velocidade."]
+};
+function emMovimentoRapido() {
+  const v = modo === "sim" ? parseFloat($("velocidade").value) : velUsuario;
+  return v > 8;   // acima de ~29 km/h: modo carro, só alertas e frases curtas
+}
+function escolherVoz() {
+  if (!("speechSynthesis" in window)) return;
+  const vs = speechSynthesis.getVoices();
+  vozPt = vs.find(v => /pt[-_]BR/i.test(v.lang)) || vs.find(v => /^pt/i.test(v.lang)) || null;
+}
+if ("speechSynthesis" in window) { escolherVoz(); speechSynthesis.onvoiceschanged = escolherVoz; }
+function liberarAudio() {   // iPhone: o áudio só funciona depois de um toque na tela
+  if (audioLiberado || !("speechSynthesis" in window)) return;
+  try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); audioLiberado = true; } catch {}
+}
+function falar(texto, prioridade, chave, intervalo) {
+  if (modoAudio === "silencioso" || !("speechSynthesis" in window)) return false;
+  if (modoAudio === "alertas" && prioridade >= 3 && prioridade !== 6) return false;
+  if (emMovimentoRapido() && (prioridade === 4 || prioridade === 5)) return false;
+  const agora = performance.now();
+  if (chave && agora - (ultimoPorChave[chave] ?? -1e9) < intervalo) return false;
+  if (prioridade > 1 && speechSynthesis.speaking && prioridade >= falando) return false;
+  if (prioridade === 1) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(texto);
+  u.lang = "pt-BR"; if (vozPt) u.voice = vozPt; u.rate = emMovimentoRapido() ? 1.15 : 1.05;
+  u.onend = () => { falando = 0; };
+  falando = prioridade;
+  try { speechSynthesis.speak(u); } catch (e) { console.log("áudio indisponível", e); return false; }
+  if (chave) ultimoPorChave[chave] = agora;
+  ultimaFala = agora;
+  if (typeof window.__falas !== "undefined") window.__falas.push(texto);
+  return true;
+}
+const plural = (n, um, varios, nenhum) => n === 0 && nenhum ? nenhum : `${n} ${n === 1 ? um : varios}`;
+function descreverContagem(c, detalhado) {
+  const p = c.person || 0, carros = c.car || 0, motos = c.motorcycle || 0, bikes = c.bicycle || 0;
+  const pesados = (c.bus || 0) + (c.truck || 0);
+  const partes = [plural(p, "pessoa", "pessoas", "nenhuma pessoa"), plural(carros, "carro", "carros", "nenhum carro")];
+  if (motos) partes.push(plural(motos, "moto", "motos"));
+  if (bikes) partes.push(plural(bikes, "bicicleta", "bicicletas"));
+  if (detalhado && pesados) partes.push(plural(pesados, "ônibus ou caminhão", "ônibus ou caminhões"));
+  return partes.join(", ");
+}
+function anunciarCamera(id) { camAnunciar = { id, em: performance.now() + 1500 }; }   // espera a imagem nova
+function narrar(alertas, contagem, agora) {
+  // 1 e 2: alertas
+  for (const a of alertas) {
+    const [pri, frase] = FALA_ALERTA[a] || [2, "Atenção: " + a.toLowerCase()];
+    const onde = camAtiva ? ` na câmera ${camAtiva.id}.` : ".";
+    falar(frase.includes("{onde}") ? frase.replace("{onde}", onde) : frase + onde, pri, "alerta-" + a, pri === 1 ? 30000 : 60000);
+  }
+  if (alertas.length) return;
+  const p = contagem.person || 0;
+  const veic = ["car","motorcycle","bus","truck"].reduce((s, k) => s + (contagem[k] || 0), 0);
+  // 3: troca de câmera
+  if (camAnunciar && agora >= camAnunciar.em) {
+    const det = modoAudio === "detalhado";
+    const txt = emMovimentoRapido() ? `Câmera ${camAnunciar.id}.` : `Câmera ${camAnunciar.id}. ${descreverContagem(contagem, det)}. Movimento normal.`;
+    falar(txt, 3, "camera-" + camAnunciar.id, 20000); camAnunciar = null; return;
+  }
+  // 4: mudanças no ambiente (média de pessoas nos últimos 20 s)
+  histPessoas.push({ t:agora, p }); while (histPessoas.length && agora - histPessoas[0].t > 20000) histPessoas.shift();
+  const media = histPessoas.reduce((s, x) => s + x.p, 0) / histPessoas.length;
+  if (media >= 2 && p === 0) { ruaVaziaDesde = ruaVaziaDesde ?? agora; } else if (p > 0) ruaVaziaDesde = null;
+  if (ruaVaziaDesde && agora - ruaVaziaDesde > 10000) { if (falar("Rua ficou vazia.", 4, "vazia", 120000)) histPessoas = []; ruaVaziaDesde = null; return; }
+  if (histPessoas.length > 20 && p >= media + 4) { falar("Movimento de pessoas aumentou.", 4, "aumentou", 60000); return; }
+  // 5: resumo periódico
+  const periodo = modoAudio === "detalhado" ? 15000 : 30000;
+  if (agora - ultimaFala > periodo && (modo !== "central" || video.srcObject)) {
+    const txt = modoAudio === "detalhado" ? `${descreverContagem(contagem, true)}.` : `Trecho tranquilo. ${plural(p, "pessoa", "pessoas", "nenhuma pessoa")} e ${plural(veic, "veículo", "veículos", "nenhum veículo")}.`;
+    falar(txt, 5, "resumo", periodo);
+  }
+}
+function mostrarModoAudio() { $("audioModo").textContent = ROTULO_AUDIO[modoAudio]; $("audioModo").classList.toggle("ativo", modoAudio !== "silencioso"); }
 
 /* ===================== Gravação (central) ===================== */
 // Grava o vídeo com as caixas de detecção, IDs, data/hora e câmera impressos na imagem.
@@ -679,6 +799,9 @@ function salvarGravacao(meta) {
   log.push([new Date().toISOString(), modo, posAtual?.lat?.toFixed(6) ?? "", posAtual?.lng?.toFixed(6) ?? "",
     meta.camera, "", "", "", "GRAVACAO:" + nome, ""]);
   $("gravStatus").textContent = `Salvo: ${nome} (${(blob.size / 1048576).toFixed(1)} MB)`;
+  // percurso do mesmo trecho do vídeo, com o mesmo nome
+  const trecho = percurso.filter(q => q.t >= meta.inicio.toISOString());
+  if (trecho.length) setTimeout(() => baixarGpx(trecho, nome.replace(/\.(mp4|webm)$/, "")), 800);
 }
 
 function aoAlerta(alertas) {
@@ -862,10 +985,11 @@ async function iniciarCelular() {
   if (!navigator.geolocation) { $("status").textContent = "GPS indisponível neste aparelho"; return; }
   watchId = navigator.geolocation.watchPosition(
     pos => {
-      const { latitude:lat, longitude:lng, accuracy } = pos.coords;
+      const { latitude:lat, longitude:lng, accuracy, speed } = pos.coords;
       if (!posAtual) mapa.setView([lat, lng], 17);
+      velUsuario = (speed ?? -1) >= 0 ? speed : velUsuario;
       novaPosicao(lat, lng, true, accuracy);
-      enviar({ tipo:"pos", lat, lng, acc:accuracy });
+      enviar({ tipo:"pos", lat, lng, acc:accuracy, spd:velUsuario });
     },
     e => $("status").textContent = "Erro de GPS: " + e.message,
     { enableHighAccuracy:true, maximumAge:1000, timeout:15000 }
@@ -906,7 +1030,7 @@ function ligarParaCentral(p) {
   });
   if (!conn || !conn.open) {
     conn = p.connect(idCentral, { reliable:true });
-    conn.on("open", () => $("status").textContent = "Transmitindo para a central");
+    conn.on("open", () => { $("status").textContent = "Transmitindo para a central"; if (gravarNaCentral) enviar({ tipo:"gravar", ligar:true }); });
     conn.on("data", d => {
       if (d.tipo === "geo") definirGeo(d.pontos);
       if (d.tipo === "ack") { ultimoAck = performance.now(); ackInfo = d; if (d.recebendo) tentativas = 0; }
@@ -964,6 +1088,7 @@ function abrirCentral() {
       call.answer();
       call.on("stream", s => {
         video.srcObject = s; video.muted = !somCentral; video.play().catch(() => {});
+        if (gravacaoRemotaAtiva && !gravando) setTimeout(() => gravacaoRemota(true), 1500);
         $("som").classList.toggle("hidden", !s.getAudioTracks().length);
         $("status").textContent = "Recebendo imagem do celular";
         iniciarDeteccao();
@@ -974,8 +1099,9 @@ function abrirCentral() {
       c.on("open", () => { if (geoPontos.length >= 3) enviar({ tipo:"geo", pontos:geoPontos.map(q => [q.lat, q.lng]) }); });
       c.on("data", d => {
         ultimoHb = performance.now();
-        if (d.tipo === "pos") novaPosicao(d.lat, d.lng, false, d.acc ?? null);
+        if (d.tipo === "pos") { if (d.spd != null) velUsuario = d.spd; novaPosicao(d.lat, d.lng, false, d.acc ?? null); }
         if (d.tipo === "pausa") $("status").textContent = "Celular em segundo plano — transmissão pausada";
+        if (d.tipo === "gravar") gravacaoRemota(d.ligar);
         if (d.tipo === "retomada") $("status").textContent = "Celular voltou — reconectando imagem…";
         if (d.tipo === "cam") { criarCamera(d.lat, d.lng, d.img, d.id); if (posAtual) ativarCamera(camMaisProxima(posAtual).cam); }
       });
@@ -1037,6 +1163,7 @@ function definirGeo(pontos) {
 
 /* ===================== Utilidades ===================== */
 function resetTrajeto() {
+  if (modo !== "central") percurso = [];
   resetRastreamento();
   posAtual = null; percorrido = 0; trilha.setLatLngs([]);
   if (mapa.hasLayer(usuario)) mapa.removeLayer(usuario);
@@ -1085,9 +1212,49 @@ function trocarModo(novo) {
   ajustarMapa();
 }
 
+/* ===================== Gravação comandada pelo celular ===================== */
+// O celular pede à central que grave tudo o que recebe (em arquivos de 2 minutos), mesmo sem ninguém no notebook.
+let gravarNaCentral = (() => { try { return localStorage.getItem("gravarCentral") === "1"; } catch { return false; } })();
+let gravacaoRemotaAtiva = false;
+function gravacaoRemota(ligar) {
+  gravacaoRemotaAtiva = !!ligar;
+  if (ligar && !gravando) {
+    const tentar = (n) => { if (!gravacaoRemotaAtiva || gravando) return;
+      if (video.srcObject && video.videoWidth) { iniciarGravacao("remota"); falar("Gravação iniciada a pedido do celular.", 6, "grav", 10000); }
+      else if (n > 0) setTimeout(() => tentar(n - 1), 1000); };
+    tentar(15);
+  }
+  if (!ligar && gravando && motivoGrav === "remota") pararGravacao();
+}
+function mostrarGravarCentral() {
+  $("gravarCentral").textContent = "⏺ Gravar na central: " + (gravarNaCentral ? "sim" : "não");
+  $("gravarCentral").classList.toggle("ativo", gravarNaCentral);
+}
+
+/* ===================== Percurso (GPX) ===================== */
+var percurso = [];
+function baixarGpx(pontos = percurso, nome) {
+  if (!pontos.length) { $("status").textContent = "Ainda não há percurso registrado"; return; }
+  const esc = x => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const pts = pontos.map(q => `      <trkpt lat="${q.lat.toFixed(6)}" lon="${q.lng.toFixed(6)}"><time>${q.t}</time>${q.cam !== "" ? `<desc>Câmera ${esc(q.cam)}</desc>` : ""}</trkpt>`).join("\n");
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Anjo da Guarda" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><name>Anjo da Guarda — percurso ${pontos[0].t.slice(0, 16).replace("T", " ")}</name>
+    <trkseg>
+${pts}
+    </trkseg>
+  </trk>
+</gpx>`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([gpx], { type:"application/gpx+xml" }));
+  const z = n => String(n).padStart(2, "0"), d = new Date();
+  a.download = (nome || `anjo_percurso_${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`) + ".gpx";
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
 /* ===================== Eventos ===================== */
 document.querySelectorAll("[data-modo]").forEach(b => b.onclick = () => trocarModo(b.dataset.modo));
-$("simIniciar").onclick = iniciarSimulacao;
+$("simIniciar").onclick = () => { liberarAudio(); iniciarSimulacao(); };
 $("simParar").onclick = () => { pararSimulacao(); $("status").textContent = "Simulação parada"; };
 $("rotaDesenhar").onclick = () => {
   desenhandoRota = !desenhandoRota; desenhandoGeo = false;
@@ -1105,9 +1272,25 @@ $("rotaPadrao").onclick = () => {
   rota = ROTA_PADRAO.map(p => L.latLng(p[0], p[1])); rotaLinha.setLatLngs(rota);
   prepararCamerasRota(); resetTrajeto(); mapa.fitBounds(rotaLinha.getBounds().pad(0.2));
 };
-$("celIniciar").onclick = iniciarCelular;
+$("celIniciar").onclick = () => { liberarAudio(); iniciarCelular(); };
 $("celParar").onclick = pararCelular;
-$("centralAbrir").onclick = abrirCentral;
+$("centralAbrir").onclick = () => { liberarAudio(); abrirCentral(); };
+$("audioModo").onclick = () => {
+  liberarAudio();
+  modoAudio = MODOS_AUDIO[(MODOS_AUDIO.indexOf(modoAudio) + 1) % MODOS_AUDIO.length];
+  try { localStorage.setItem("modoAudio", modoAudio); } catch {}
+  mostrarModoAudio();
+  if (modoAudio !== "silencioso") falar({ alertas:"Áudio só com alertas.", resumo:"Áudio com alertas e resumo.", detalhado:"Áudio detalhado." }[modoAudio], 6, null, 0);
+  else if ("speechSynthesis" in window) speechSynthesis.cancel();
+};
+mostrarModoAudio();
+$("gravarCentral").onclick = () => {
+  gravarNaCentral = !gravarNaCentral;
+  try { localStorage.setItem("gravarCentral", gravarNaCentral ? "1" : "0"); } catch {}
+  mostrarGravarCentral();
+  enviar({ tipo:"gravar", ligar:gravarNaCentral });
+};
+mostrarGravarCentral();
 $("geoDesenhar").onclick = () => {
   desenhandoGeo = !desenhandoGeo; desenhandoRota = false;
   $("geoDesenhar").classList.toggle("ativo", desenhandoGeo); $("rotaDesenhar").classList.remove("ativo");
@@ -1127,6 +1310,7 @@ $("turnSalvar").onclick = async () => {
 };
 iceServers();
 $("baixarObj").onclick = baixarObjetos;
+$("baixarGpx").onclick = () => baixarGpx();
 // Limita o crescimento dos registros em memória (sessões longas)
 setInterval(() => {
   if (log.length > 20000) log.splice(1, log.length - 15000);
@@ -1148,10 +1332,11 @@ $("gravarAlertas").checked = lerCfg("gravarAlertas") !== "0";
 $("gravarAlertas").onchange = () => salvarCfg("gravarAlertas", $("gravarAlertas").checked ? "1" : "0");
 
 /* ===================== Início ===================== */
+
 /* ===================== Atualização automática ===================== */
 // A cada minuto verifica version.json no GitHub. A central recarrega sozinha e reabre;
 // o celular mostra um aviso (recarregar exigiria nova permissão de câmera).
-const VERSAO = 20;
+const VERSAO = 21;
 async function verificarVersao() {
   try {
     const r = await fetch("version.json?t=" + Date.now(), { cache:"no-store" });
