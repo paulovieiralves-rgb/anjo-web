@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Anjo Câmera">
+<meta name="theme-color" content="#0f172a">
+<title>Anjo da Guarda — Câmera</title>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"></script>
+<style>
+  :root { --bg:#0f172a; --painel:#1e293b; --txt:#e2e8f0; --sub:#94a3b8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--txt);
+         padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom)); }
+  h1 { font-size:20px; margin:14px 0 4px; }
+  .sub { color:var(--sub); font-size:13px; }
+  .link { border-radius:8px; padding:10px; margin:10px 0; font-weight:600; background:#334155; }
+  .ok { background:#15803d; } .warn { background:#a16207; } .mau { background:#b91c1c; }
+  #alerta { display:none; background:#dc2626; border-radius:8px; padding:10px; font-weight:700; margin-bottom:10px; }
+  #tela { position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; }
+  #tela video, #tela canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  #cont { margin:10px 0 4px; }
+  button { width:100%; border:0; border-radius:10px; padding:14px; font-size:15px; font-weight:600; color:#fff; background:#334155; margin-top:10px; }
+  .linha { display:flex; gap:10px; } .linha button { flex:1; }
+  .verde { background:#15803d; } .vermelho { background:#b91c1c; }
+  .nota { color:#64748b; font-size:12px; margin-top:12px; }
+  #semPar { margin-top:30vh; text-align:center; }
+</style>
+</head>
+<body>
+<div id="semPar" style="display:none">
+  <h1>Anjo da Guarda · Câmera</h1>
+  <p class="sub">Este celular ainda não está pareado. Na central (notebook), clique em “Gerar QR” e leia o QR com a câmera do celular.</p>
+</div>
+
+<div id="app" style="display:none">
+  <h1 id="nome">Câmera</h1>
+  <div class="sub" id="validade"></div>
+  <div id="link" class="link">Transmissão parada</div>
+  <div id="alerta"></div>
+  <div id="tela"><video id="video" autoplay playsinline muted></video><canvas id="caixas"></canvas></div>
+  <div id="cont"></div>
+  <div class="sub" id="gpsInfo"></div>
+  <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
+  <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
+  <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
+  <p class="nota">Versão web para iPhone enquanto o app nativo não é instalado. Mantenha esta tela aberta: o iPhone
+    pausa a câmera de páginas web quando outro app é aberto ou a tela bloqueia.</p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const CENTRAL = "anjo-central";
+const NOMES = { person:"pessoa", bicycle:"bicicleta", car:"carro", motorcycle:"moto", bus:"ônibus", truck:"caminhão",
+  knife:"faca", backpack:"mochila", handbag:"bolsa" };
+const PLURAL = { person:"pessoas", bicycle:"bicicletas", car:"carros", motorcycle:"motos", bus:"ônibus", truck:"caminhões" };
+const ATENCAO = new Set(["PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"]);
+const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+             set(k, v) { try { localStorage.setItem(k, v); } catch {} }, del(k) { try { localStorage.removeItem(k); } catch {} } };
+
+/* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
+function lerFragmento() {
+  const m = location.hash.match(/p=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  try {
+    const b = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    const d = JSON.parse(decodeURIComponent(escape(atob(b + "===".slice((b.length + 3) % 4)))));
+    return d && d.anjo === 1 && d.url && d.token ? { url:d.url, token:d.token, nome:d.nome || "camera" } : null;
+  } catch { return null; }
+}
+let par = lerFragmento();
+if (par) { ls.set("anjo.pareamento", JSON.stringify(par)); history.replaceState(null, "", location.pathname); }
+else { try { par = JSON.parse(ls.get("anjo.pareamento") || "null"); } catch { par = null; } }
+
+function validade(p) {
+  try { const c = JSON.parse(atob(p.token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); return c.exp ? new Date(c.exp * 1000) : null; }
+  catch { return null; }
+}
+if (!par) $("semPar").style.display = "block";
+else {
+  $("app").style.display = "block"; $("nome").textContent = par.nome;
+  const v = validade(par); if (v) $("validade").textContent = "pareado até " + v.toLocaleDateString("pt-BR");
+}
+
+/* ---------- voz ---------- */
+const MODOS = ["silencioso", "alertas", "resumo"];
+const ROT = { silencioso:"🔇 Áudio: silencioso", alertas:"🔊 Áudio: só alertas", resumo:"🔊 Áudio: alertas e resumo" };
+let modoAudio = MODOS.includes(ls.get("anjo.audio")) ? ls.get("anjo.audio") : "resumo";
+$("btAudio").textContent = ROT[modoAudio];
+const ultimoPorChave = {}; let falandoAte = 0, ultimaPrioridade = 99, vozPt = null;
+function escolherVoz() { try { const vs = speechSynthesis.getVoices(); vozPt = vs.find(v => /pt[-_]BR/i.test(v.lang)) || vs.find(v => /^pt/i.test(v.lang)) || null; } catch {} }
+try { escolherVoz(); speechSynthesis.onvoiceschanged = escolherVoz; } catch {}
+function falar(texto, prioridade, chave, intervalo) {
+  try {
+    if (modoAudio === "silencioso" || (modoAudio === "alertas" && prioridade > 2 && prioridade !== 6)) return;
+    const agora = Date.now();
+    if (agora - (ultimoPorChave[chave] ?? -1e12) < intervalo) return;
+    const ocupado = agora < falandoAte;
+    if (ocupado && prioridade >= ultimaPrioridade) return;
+    if (ocupado) speechSynthesis.cancel();
+    ultimoPorChave[chave] = agora; ultimaPrioridade = prioridade; falandoAte = agora + 600 + texto.length * 70;
+    const u = new SpeechSynthesisUtterance(texto); u.lang = "pt-BR"; if (vozPt) u.voice = vozPt;
+    u.onend = () => falandoAte = 0; speechSynthesis.speak(u);
+  } catch (e) { console.log("voz", e); }
+}
+
+/* ---------- transmissão (LiveKit) ---------- */
+let room = null, ativo = false, frontal = false, hb = null, gpsWatch = null, wakeLock = null;
+let gravar = ls.get("anjo.gravar") === "1", ack = null, ackT = 0, dets = null, detsT = 0, alertaAte = 0, ultimoLink = "", velocidade = 0;
+const cod = new TextEncoder(), dec = new TextDecoder();
+
+function enviar(msg, confiavel = true) {
+  if (!room || room.state !== "connected") return;
+  room.localParticipant.publishData(cod.encode(JSON.stringify(msg)), { reliable: confiavel, topic: "anjo", destinationIdentities: [CENTRAL] }).catch(() => {});
+}
+function botaoGravar() { $("btGravar").textContent = gravar ? "⏺ Gravando na central" : "⏺ Gravar na central"; $("btGravar").className = gravar ? "vermelho" : ""; }
+botaoGravar();
+
+async function conectar() {
+  if (!ativo) return;
+  const R = LivekitClient;
+  room = new R.Room({ adaptiveStream:false, dynacast:false,
+    videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution },
+    publishDefaults: { simulcast:false, videoEncoding: { maxBitrate: 900000, maxFramerate: 15 } } });
+  room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar:gravar }))
+      .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) enviar({ tipo:"gravar", ligar:gravar }); })
+      .on(R.RoomEvent.Disconnected, motivo => {
+        $("video").srcObject = null;
+        if (ativo && motivo !== R.DisconnectReason.CLIENT_INITIATED) setTimeout(() => conectar().catch(() => {}), 3000);
+      })
+      .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
+        if (topico !== "anjo") return;
+        let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
+        if (m.tipo === "ack") { ack = m; ackT = Date.now(); if (m.continuo !== gravar) enviar({ tipo:"gravar", ligar:gravar }); resumo(m.contagem || {}); }
+        else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
+        else if (m.tipo === "alerta") mostrarAlerta(m);
+      });
+  try {
+    await room.connect(par.url, par.token);
+    await room.localParticipant.setCameraEnabled(true);
+    await room.localParticipant.setMicrophoneEnabled(true);
+    const pub = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
+    if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
+    enviar({ tipo:"gravar", ligar:gravar });
+  } catch (e) {
+    console.log(e); $("link").textContent = "Falha ao conectar: " + (e.message || e);
+    if (ativo) setTimeout(() => conectar().catch(() => {}), 5000);
+  }
+}
+
+async function iniciar() {
+  ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
+  falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+  await conectar();
+  hb = setInterval(() => enviar({ tipo:"hb" }, false), 1000);
+  if (navigator.geolocation) gpsWatch = navigator.geolocation.watchPosition(p => {
+    if (p.coords.accuracy > 35) return;
+    velocidade = Math.max(0, p.coords.speed || 0);
+    const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
+    enviar(g); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h`;
+  }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
+}
+async function parar() {
+  ativo = false; $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde";
+  clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
+  try { await wakeLock?.release(); } catch {} wakeLock = null;
+  await room?.disconnect(); room = null; ack = null; dets = null;
+}
+// a tela volta a ficar ligada quando o usuário retorna à página
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && ativo) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+});
+
+function resumo(c) {
+  if (velocidade > 8) return;
+  const partes = Object.keys(PLURAL).filter(k => c[k]).map(k => `${c[k]} ${c[k] === 1 ? NOMES[k] : PLURAL[k]}`);
+  falar(partes.length ? "À frente: " + partes.join(", ") : "Rua vazia", 5, "resumo", 45000);
+}
+function mostrarAlerta(m) {
+  const el = $("alerta");
+  el.textContent = "ALERTA: " + m.alertas.join(" | ") + (m.cam !== par.nome ? ` (${m.cam})` : "");
+  el.style.background = m.alertas.every(a => ATENCAO.has(a)) ? "#a16207" : "#dc2626";
+  el.style.display = "block"; alertaAte = Date.now() + 8000;
+  m.falas.forEach((f, i) => falar(f, m.grave ? 1 : 2, m.alertas[i] || f, 10000));
+  if (m.grave && navigator.vibrate) navigator.vibrate([300, 100, 300]);
+}
+
+/* ---------- indicador e caixas ---------- */
+setInterval(() => {
+  const recente = ack && Date.now() - ackT < 3500;
+  const [cls, txt] = !ativo ? ["", "Transmissão parada"]
+    : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.gravando ? " · ⏺ gravando" : ""}`]
+    : recente ? ["warn", "● Central conectada, mas sem imagem"]
+    : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
+  $("link").className = "link " + cls; $("link").textContent = txt;
+  if (ultimoLink && ultimoLink !== cls) {
+    if (cls === "ok") falar("Central recebendo.", 6, "link", 5000);
+    if (cls === "mau" && ultimoLink === "ok") falar("Atenção: conexão com a central perdida.", 2, "link", 5000);
+  }
+  ultimoLink = cls;
+  const c = recente ? ack.contagem : {};
+  $("cont").textContent = (Object.entries(c).map(([k, v]) => `${NOMES[k] || k}: ${v}`).join(" · ") || (ativo ? "Nenhum objeto" : ""))
+    + (recente && ack.unicos && ack.unicos.person ? `  ·  únicos: ${ack.unicos.person} pessoas` : "");
+  if (Date.now() > alertaAte) $("alerta").style.display = "none";
+}, 1000);
+
+function desenhar() {
+  const cv = $("caixas"), ctx = cv.getContext("2d"), r = cv.getBoundingClientRect();
+  cv.width = r.width; cv.height = r.height; ctx.clearRect(0, 0, cv.width, cv.height);
+  if (dets && Date.now() - detsT < 2500 && ativo) {
+    const esc = Math.min(cv.width / dets.w, cv.height / dets.h), ox = (cv.width - dets.w * esc) / 2, oy = (cv.height - dets.h * esc) / 2;
+    ctx.font = "12px system-ui"; ctx.lineWidth = 2;
+    for (const [x, y, w, h, classe, id, susp] of dets.objs) {
+      const cor = classe === "knife" ? "#ef4444" : susp ? "#f97316" : "#22c55e";
+      const rot = `${NOMES[classe] || classe} #${id}${susp ? " · " + susp : ""}`;
+      ctx.strokeStyle = cor; ctx.strokeRect(ox + x * esc, oy + y * esc, w * esc, h * esc);
+      ctx.fillStyle = cor; ctx.fillRect(ox + x * esc, oy + y * esc - 16, ctx.measureText(rot).width + 6, 16);
+      ctx.fillStyle = "#000"; ctx.fillText(rot, ox + x * esc + 3, oy + y * esc - 4);
+    }
+  }
+  requestAnimationFrame(desenhar);
+}
+requestAnimationFrame(desenhar);
+
+/* ---------- botões ---------- */
+$("btIniciar").onclick = () => ativo ? parar() : iniciar();
+$("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar:gravar }); };
+$("btCam").onclick = async () => {
+  frontal = !frontal;
+  const pub = room?.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
+  try { await pub?.videoTrack?.restartTrack({ facingMode: frontal ? "user" : "environment" }); } catch (e) { console.log(e); }
+};
+$("btAudio").onclick = () => {
+  modoAudio = MODOS[(MODOS.indexOf(modoAudio) + 1) % MODOS.length]; ls.set("anjo.audio", modoAudio);
+  $("btAudio").textContent = ROT[modoAudio]; if (modoAudio === "silencioso") try { speechSynthesis.cancel(); } catch {}
+};
+$("btDesparear").onclick = async () => {
+  if (!confirm("Apagar o pareamento deste celular?")) return;
+  await parar(); ls.del("anjo.pareamento"); location.reload();
+};
+</script>
+</body>
+</html>
