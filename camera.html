@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-title" content="Anjo Câmera">
 <meta name="theme-color" content="#0f172a">
 <title>Anjo da Guarda — Câmera</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>window.L || document.write('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"><script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>');</script>
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"></script>
 <style>
   :root { --bg:#0f172a; --painel:#1e293b; --txt:#e2e8f0; --sub:#94a3b8; }
@@ -21,6 +24,8 @@
   #tela { position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; }
   #tela video, #tela canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
   #cont { margin:10px 0 4px; }
+  #mapa { height:240px; border-radius:12px; margin-top:10px; background:#1e293b; }
+  .pin-alerta { background:#ef4444; color:#fff; border-radius:50%; width:22px; height:22px; line-height:22px; text-align:center; font-weight:700; border:2px solid #fff; }
   button { width:100%; border:0; border-radius:10px; padding:14px; font-size:15px; font-weight:600; color:#fff; background:#334155; margin-top:10px; }
   .linha { display:flex; gap:10px; } .linha button { flex:1; }
   .verde { background:#15803d; } .vermelho { background:#b91c1c; }
@@ -42,6 +47,7 @@
   <div id="tela"><video id="video" autoplay playsinline muted></video><canvas id="caixas"></canvas></div>
   <div id="cont"></div>
   <div class="sub" id="gpsInfo"></div>
+  <div id="mapa"></div>
   <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
   <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
   <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
@@ -82,6 +88,40 @@ else {
   $("app").style.display = "block"; $("nome").textContent = par.nome;
   const v = validade(par); if (v) $("validade").textContent = "pareado até " + v.toLocaleDateString("pt-BR");
 }
+
+/* ---------- mapa: percurso e posição atual ---------- */
+let mapa = null, rota = null, eu = null, seguir = true, percurso = [];
+function iniciarMapa() {
+  if (mapa || !window.L || !par) return;
+  mapa = L.map("mapa", { zoomControl: true }).setView([-22.9847, -43.2003], 16);
+  const ruas = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Tiles © Esri" }).addTo(mapa);
+  const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Tiles © Esri" });
+  L.control.layers({ "Ruas": ruas, "Satélite": sat }).addTo(mapa);
+  rota = L.polyline([], { color: "#2563eb", weight: 5 }).addTo(mapa);
+  mapa.on("dragstart", () => seguir = false);
+  const Centro = L.Control.extend({ onAdd() { const b = L.DomUtil.create("a", "leaflet-bar");
+    b.textContent = "◎"; b.href = "#"; b.style.cssText = "width:30px;height:30px;line-height:30px;text-align:center;background:#fff;color:#000;font-size:18px";
+    b.onclick = e => { e.preventDefault(); seguir = true; if (eu) mapa.setView(eu.getLatLng()); }; return b; } });
+  new Centro({ position: "topleft" }).addTo(mapa);
+  setTimeout(() => mapa.invalidateSize(), 300);
+}
+function posicaoNoMapa(lat, lng) {
+  if (!mapa) return;
+  percurso.push([lat, lng]); if (percurso.length > 5000) percurso.shift();
+  rota.setLatLngs(percurso);
+  if (!eu) eu = L.circleMarker([lat, lng], { radius: 8, color: "#fff", weight: 2, fillColor: "#ef4444", fillOpacity: 1 }).addTo(mapa);
+  else eu.setLatLng([lat, lng]);
+  if (seguir) mapa.setView([lat, lng], Math.max(mapa.getZoom(), 16));
+}
+function alertaNoMapa(m) {
+  if (!mapa || !m.pos || m.pos.lat == null) return;
+  L.marker([m.pos.lat, m.pos.lng], { icon: L.divIcon({ className: "", html: '<div class="pin-alerta">!</div>', iconSize: [22, 22] }) })
+    .addTo(mapa).bindPopup(new Date(m.t).toLocaleTimeString("pt-BR") + " · " + m.alertas.join(", "));
+}
+iniciarMapa();
+window.addEventListener("load", iniciarMapa);
 
 /* ---------- voz ---------- */
 const MODOS = ["silencioso", "alertas", "resumo"];
@@ -159,7 +199,7 @@ async function iniciar() {
     if (p.coords.accuracy > 35) return;
     velocidade = Math.max(0, p.coords.speed || 0);
     const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
-    enviar(g); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h`;
+    enviar(g); posicaoNoMapa(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h`;
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
 }
 async function parar() {
@@ -182,7 +222,7 @@ function mostrarAlerta(m) {
   const el = $("alerta");
   el.textContent = "ALERTA: " + m.alertas.join(" | ") + (m.cam !== par.nome ? ` (${m.cam})` : "");
   el.style.background = m.alertas.every(a => ATENCAO.has(a)) ? "#a16207" : "#dc2626";
-  el.style.display = "block"; alertaAte = Date.now() + 8000;
+  el.style.display = "block"; alertaAte = Date.now() + 8000; alertaNoMapa(m);
   m.falas.forEach((f, i) => falar(f, m.grave ? 1 : 2, m.alertas[i] || f, 10000));
   if (m.grave && navigator.vibrate) navigator.vibrate([300, 100, 300]);
 }
