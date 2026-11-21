@@ -26,6 +26,12 @@
   #cont { margin:10px 0 4px; }
   .rota { background:var(--painel); border-radius:12px; padding:10px; margin-top:10px; }
   .campo { position:relative; }
+  .campo input { padding-right:52px !important; }
+  .mic { position:absolute; right:4px; top:10px; width:42px; height:38px; margin:0; padding:0; border-radius:8px;
+         background:#334155; font-size:18px; }
+  .mic.ouvindo { background:#dc2626; animation:pulsa 1s infinite; }
+  @keyframes pulsa { 50% { opacity:.55; } }
+  .rotulo-cam { display:inline-block; color:#fff; border:2px solid #fff; border-radius:6px; padding:1px 5px; font:600 11px system-ui; white-space:nowrap; }
   .sugestoes { display:none; background:#0f172a; border:1px solid #334155; border-radius:8px; margin-top:4px; }
   .sugestoes .lista { max-height:55vh; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
   .sugestoes .item, .sugestoes .msg { padding:10px; border-bottom:1px solid #1e293b; }
@@ -69,8 +75,8 @@
   <div id="mapa"></div>
   <div class="rota">
     <select id="rotaModo"><option value="foot">🚶 A pé</option><option value="bike">🚲 Bike</option><option value="car">🚗 Carro</option></select>
-    <div class="campo"><input id="rotaDe" placeholder="Origem: endereço ou lugar (vazio = minha localização)" autocomplete="off"><div class="sugestoes" id="sugDe"></div></div>
-    <div class="campo"><input id="rotaPara" placeholder="Destino: endereço, restaurante, parque…" autocomplete="off"><div class="sugestoes" id="sugPara"></div></div>
+    <div class="campo"><input id="rotaDe" placeholder="Origem (vazio = minha localização)" autocomplete="off"><button class="mic" id="micDe" title="Falar a origem">🎤</button><div class="sugestoes" id="sugDe"></div></div>
+    <div class="campo"><input id="rotaPara" placeholder="Destino: endereço, restaurante, parque…" autocomplete="off"><button class="mic" id="micPara" title="Falar o destino">🎤</button><div class="sugestoes" id="sugPara"></div></div>
     <div class="linha"><button id="btMapaDe">📍 Origem no mapa</button><button id="btMapaPara">📍 Destino no mapa</button></div>
     <div class="linha"><button id="btRota" class="verde">🧭 Traçar rota</button><button id="btLimparRota">Limpar</button></div>
     <div id="rotaInfo" class="sub"></div>
@@ -84,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C10";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C11";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -154,6 +160,18 @@ function posicaoNoMapa(lat, lng) {
   if (!eu) eu = L.circleMarker([lat, lng], { radius: 8, color: "#fff", weight: 2, fillColor: "#ef4444", fillOpacity: 1 }).addTo(mapa);
   else eu.setLatLng([lat, lng]);
   if (seguir) mapa.setView([lat, lng], Math.max(mapa.getZoom(), 16));
+}
+// Câmeras virtuais (CAM-01…) no mapa: a ativa em azul
+const camsVirtuais = {};
+function camVirtualNoMapa(id, pos) {
+  if (!mapa || !id || !pos) return;
+  for (const [k, mk] of Object.entries(camsVirtuais)) if (k !== id && mk.ativa) {
+    mk.ativa = false; mk.setIcon(L.divIcon({ className: "", iconSize: null, iconAnchor: [-6, 10], html: `<span class="rotulo-cam" style="background:#334155">📷 ${k}</span>` }));
+  }
+  if (camsVirtuais[id] && camsVirtuais[id].ativa) return;
+  const ic = L.divIcon({ className: "", iconSize: null, iconAnchor: [-6, 10], html: `<span class="rotulo-cam" style="background:#2563eb">📷 ${id}</span>` });
+  if (!camsVirtuais[id]) camsVirtuais[id] = L.marker(pos, { icon: ic }).addTo(mapa); else camsVirtuais[id].setIcon(ic);
+  camsVirtuais[id].ativa = true;
 }
 // Alertas no mapa agrupados: alertas a menos de 60 m de um pino existente entram nele (o número conta).
 const pinosAlerta = [];
@@ -411,6 +429,7 @@ function ligarSugestoes(input, caixa) {
     caixa.querySelector(".fechar").onclick = fechar;
     caixa.style.display = "block";
   };
+  input.buscarAgora = () => { clearTimeout(espera); buscar(true); };
   input.addEventListener("input", () => { input.escolha = null; clearTimeout(espera); espera = setTimeout(() => buscar(false), 600); });
   input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(espera); input.blur(); buscar(true); } });
   input.addEventListener("focus", () => document.querySelectorAll(".sugestoes").forEach(c => { if (c !== caixa) { c.style.display = "none"; c.innerHTML = ""; } }));
@@ -471,6 +490,36 @@ ligarSugestoes($("rotaDe"), $("sugDe"));
 $("btMapaDe").onclick = () => marcarNoMapa($("rotaDe"));
 $("btMapaPara").onclick = () => marcarNoMapa($("rotaPara"));
 ligarSugestoes($("rotaPara"), $("sugPara"));
+
+/* ---------- comando de voz para origem e destino ----------
+   Usa o reconhecimento de fala do navegador (Safari/Chrome). Sem ele, o microfone do teclado do iPhone também funciona. */
+const Reconhecedor = window.SpeechRecognition || window.webkitSpeechRecognition;
+function ligarMicrofone(botao, input) {
+  if (!Reconhecedor) { botao.onclick = () => { input.focus(); $("rotaInfo").textContent = "🎤 Use o microfone do teclado do iPhone para ditar."; }; return; }
+  let rec = null;
+  botao.onclick = () => {
+    if (rec) { rec.stop(); return; }
+    rec = new Reconhecedor();
+    rec.lang = "pt-BR"; rec.interimResults = true; rec.maxAlternatives = 1;
+    botao.classList.add("ouvindo"); botao.textContent = "⏺";
+    $("rotaInfo").textContent = `🎤 Pode falar o ${input.id === "rotaDe" ? "local de origem" : "destino"}…`;
+    let final = "";
+    rec.onresult = ev => {
+      let texto = "";
+      for (const r of ev.results) { texto += r[0].transcript; if (r.isFinal) final = texto; }
+      input.value = texto.trim(); input.escolha = null;
+    };
+    rec.onerror = ev => { $("rotaInfo").textContent = ev.error === "not-allowed"
+      ? "⚠ Permita o microfone para o site nos ajustes do Safari." : "⚠ Não entendi. Toque no 🎤 e fale de novo."; };
+    rec.onend = () => {
+      botao.classList.remove("ouvindo"); botao.textContent = "🎤"; rec = null;
+      if (input.value.trim().length >= 3) { $("rotaInfo").textContent = ""; input.buscarAgora(); }   // mostra a lista para confirmar
+    };
+    try { rec.start(); } catch (e) { botao.classList.remove("ouvindo"); botao.textContent = "🎤"; rec = null; }
+  };
+}
+ligarMicrofone($("micDe"), $("rotaDe"));
+ligarMicrofone($("micPara"), $("rotaPara"));
 $("btLimparRota").onclick = () => { rota = null; ls.del("anjo.rota"); desenharRota(); enviarRota(); };
 try { rota = JSON.parse(ls.get("anjo.rota") || "null"); } catch { rota = null; }
 if (rota) { desenharRota(true); }
@@ -524,7 +573,7 @@ async function conectar() {
       .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
         if (topico !== "anjo") return;
         let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
-        if (m.tipo === "ack") { ack = m; ackT = Date.now(); if (m.continuo !== gravar) enviar({ tipo:"gravar", ligar:gravar }); resumo(m.contagem || {}); }
+        if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== gravar) enviar({ tipo:"gravar", ligar:gravar }); resumo(m.contagem || {}); }
         else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
         else if (m.tipo === "alerta") mostrarAlerta(m);
       });
@@ -594,7 +643,8 @@ setInterval(() => {
   ultimoLink = cls;
   const c = recente ? ack.contagem : {};
   $("cont").textContent = (Object.entries(c).map(([k, v]) => `${NOMES[k] || k}: ${v}`).join(" · ") || (ativo ? "Nenhum objeto" : ""))
-    + (recente && ack.unicos && ack.unicos.person ? `  ·  únicos: ${ack.unicos.person} pessoas` : "");
+    + (recente && ack.virtual && ack.unicos_trecho ? `  ·  no trecho ${ack.virtual}: ${ack.unicos_trecho.person || 0} pessoas, `
+        + `${["car","motorcycle","bus","truck"].reduce((n, k) => n + (ack.unicos_trecho[k] || 0), 0)} veículos` : "");
   if (Date.now() > alertaAte) $("alerta").style.display = "none";
 }, 1000);
 
