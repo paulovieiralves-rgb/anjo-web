@@ -34,6 +34,8 @@
   .sugestoes small { color:var(--sub); }
   .sugestoes .acoes { display:flex; gap:8px; padding:8px; position:sticky; bottom:0; background:#0f172a; }
   .sugestoes .acoes button { margin-top:0; padding:11px; flex:1; }
+  .sugestoes .aviso { background:#422006; }
+  .sugestoes .aviso small { color:#fde68a; }
   .sugestoes .acoes .usar { flex:2; } .sugestoes .acoes button:disabled { opacity:.45; }
   .rota input, .rota select { width:100%; background:#0f172a; color:var(--txt); border:1px solid #334155; border-radius:8px;
     padding:10px; font-size:16px; margin-top:6px; }
@@ -68,6 +70,7 @@
     <select id="rotaModo"><option value="foot">🚶 A pé</option><option value="bike">🚲 Bike</option><option value="car">🚗 Carro</option></select>
     <div class="campo"><input id="rotaDe" placeholder="Origem: endereço ou lugar (vazio = minha localização)" autocomplete="off"><div class="sugestoes" id="sugDe"></div></div>
     <div class="campo"><input id="rotaPara" placeholder="Destino: endereço, restaurante, parque…" autocomplete="off"><div class="sugestoes" id="sugPara"></div></div>
+    <div class="linha"><button id="btMapaDe">📍 Origem no mapa</button><button id="btMapaPara">📍 Destino no mapa</button></div>
     <div class="linha"><button id="btRota" class="verde">🧭 Traçar rota</button><button id="btLimparRota">Limpar</button></div>
     <div id="rotaInfo" class="sub"></div>
   </div>
@@ -80,7 +83,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C4";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C5";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -189,16 +192,22 @@ const CATEGORIAS = { restaurante:"amenity:restaurant", restaurantes:"amenity:res
   praca:"place:square", "praça":"place:square", supermercado:"shop:supermarket", mercado:"shop:supermarket", shopping:"shop:mall",
   hotel:"tourism:hotel", academia:"leisure:fitness_centre", posto:"amenity:fuel", igreja:"amenity:place_of_worship", museu:"tourism:museum" };
 function distKm(a, b) { const r = Math.PI / 180, x = (b.lng - a.lng) * r * Math.cos((a.lat + b.lat) * r / 2), y = (b.lat - a.lat) * r; return 6371 * Math.hypot(x, y); }
+function pontoReferencia() {
+  return eu ? eu.getLatLng() : (rota ? { lat: rota.origem.lat, lng: rota.origem.lng } : { lat: -22.9847, lng: -43.2003 });
+}
+// Nominatim: só em ação explícita do usuário (regra do serviço: nada de busca a cada letra)
+async function buscarNominatim(texto, limite, perto) {
+  perto = perto || pontoReferencia();
+  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
+  url += `&viewbox=${perto.lng - 0.5},${perto.lat + 0.5},${perto.lng + 0.5},${perto.lat - 0.5}`;
+  const d = await buscarJson(url);
+  return d.map(x => ({ lat: +x.lat, lng: +x.lon, nome: x.name || x.display_name.split(",").slice(0, 2).join(",").trim(),
+    detalhe: (TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + x.display_name.split(",").slice(1, 4).join(",").trim() }));
+}
 async function buscarLugares(texto, limite = 6, explicito = false) {
   const perto = eu ? eu.getLatLng() : (rota ? { lat: rota.origem.lat, lng: rota.origem.lng } : { lat: -22.9847, lng: -43.2003 });
   const temNumero = /\d/.test(texto);
-  const nominatim = async () => {
-    let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
-    url += `&viewbox=${perto.lng - 0.5},${perto.lat + 0.5},${perto.lng + 0.5},${perto.lat - 0.5}`;
-    const d = await buscarJson(url);
-    return d.map(x => ({ lat: +x.lat, lng: +x.lon, nome: x.name || x.display_name.split(",").slice(0, 2).join(",").trim(),
-      detalhe: (TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + x.display_name.split(",").slice(1, 4).join(",").trim() }));
-  };
+  const nominatim = () => buscarNominatim(texto, limite, perto);
   // Endereço com número digitado e confirmado (Traçar rota): Nominatim primeiro, que entende "Rua X, 611".
   // (Nominatim não pode ser usado para sugestões a cada letra — regra do serviço.)
   if (explicito && temNumero) { try { const l = await nominatim(); if (l.length) return l; } catch (e) { console.log(e); } }
@@ -235,6 +244,33 @@ async function geocodificar(texto, campo) {
 // Lista de resultados dentro da página. Tocar num item só MARCA (e mostra no mapa);
 // o lugar é aceito apenas no botão "✔ Usar este lugar". Assim dá para rolar e procurar com calma.
 let pinoPrevia = null;
+function mostrarPrevia(lugar) {
+  if (!mapa) return;
+  if (pinoPrevia) pinoPrevia.remove();
+  pinoPrevia = L.circleMarker([lugar.lat, lugar.lng], { radius: 10, color: "#fff", weight: 3, fillColor: "#f59e0b", fillOpacity: 1 })
+    .addTo(mapa).bindTooltip(lugar.nome, { permanent: true, direction: "top", offset: [0, -8] });
+  seguir = false; mapa.setView([lugar.lat, lugar.lng], Math.max(mapa.getZoom(), 16));
+}
+// Escolher origem/destino tocando no mapa (funciona para lugares que não estão cadastrados)
+function marcarNoMapa(input) {
+  if (!mapa) return;
+  const qual = input.id === "rotaDe" ? "origem" : "destino";
+  $("rotaInfo").textContent = `📍 Toque no mapa no ponto de ${qual}. Arraste e dê zoom à vontade antes de tocar.`;
+  $("mapa").scrollIntoView({ block: "center", behavior: "smooth" });
+  $("mapa").style.outline = "3px solid #f59e0b";
+  seguir = false;
+  mapa.once("click", async (e) => {
+    $("mapa").style.outline = "";
+    const lugar = { lat: e.latlng.lat, lng: e.latlng.lng, nome: "Ponto no mapa", detalhe: "" };
+    try {   // nome do lugar tocado (uma consulta, feita pelo toque do usuário)
+      const d = await buscarJson(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=pt-BR&lat=${lugar.lat}&lon=${lugar.lng}`);
+      if (d && d.display_name) lugar.nome = d.name || d.display_name.split(",").slice(0, 2).join(",").trim();
+    } catch {}
+    input.value = lugar.nome; input.escolha = { ...lugar, texto: lugar.nome };
+    mostrarPrevia(lugar);
+    $("rotaInfo").textContent = `📍 ${qual === "origem" ? "Origem" : "Destino"} marcado. Toque em “Traçar rota”.`;
+  });
+}
 function ligarSugestoes(input, caixa) {
   let espera = null, pedido = 0, marcado = null;
   const fechar = () => { caixa.style.display = "none"; caixa.innerHTML = ""; marcado = null; if (pinoPrevia) { pinoPrevia.remove(); pinoPrevia = null; } };
@@ -250,27 +286,47 @@ function ligarSugestoes(input, caixa) {
     try { l = await buscarLugares(t, 10); } catch (e) { if (meu === pedido) aviso("⚠ " + e.message); return; }
     if (meu !== pedido || input.value.trim() !== t) return;
     if (!l.length) { aviso("Nada encontrado. Tente incluir o bairro (ex.: Pobre Juan Ipanema)."); return; }
-    const perto = eu ? eu.getLatLng() : null;
-    caixa.innerHTML = '<div class="lista"></div><div class="acoes"><button class="usar verde" disabled>✔ Usar este lugar</button><button class="fechar">✕ Fechar</button></div>';
+    const perto = pontoReferencia();
+    caixa.innerHTML = '<div class="msg aviso" style="display:none"><small></small></div><div class="lista"></div>'
+      + '<div class="acoes"><button class="usar verde" disabled>✔ Usar este lugar</button><button class="fechar">✕ Fechar</button></div>'
+      + '<div class="acoes" style="padding-top:0"><button class="mais">🔎 Buscar mais</button><button class="nomapa">📍 Marcar no mapa</button></div>';
     const lista = caixa.querySelector(".lista"), usar = caixa.querySelector(".usar");
-    l.forEach(lugar => {
-      const el = document.createElement("div"); el.className = "item";
-      el.innerHTML = "<b></b><small></small>";
-      el.querySelector("b").textContent = lugar.nome;
-      const km = perto ? distKm(perto, lugar) : null;
-      el.querySelector("small").textContent = lugar.detalhe + (km !== null ? ` · a ${km < 1 ? Math.round(km * 1000) + " m" : km.toFixed(1).replace(".", ",") + " km"}` : "");
-      el.onclick = () => {              // só marca e mostra no mapa
-        lista.querySelectorAll(".item").forEach(i => i.classList.remove("sel")); el.classList.add("sel");
-        marcado = lugar; usar.disabled = false; usar.textContent = "✔ Usar: " + lugar.nome;
-        if (mapa) {
-          if (pinoPrevia) pinoPrevia.remove();
-          pinoPrevia = L.circleMarker([lugar.lat, lugar.lng], { radius: 10, color: "#fff", weight: 3, fillColor: "#f59e0b", fillOpacity: 1 })
-            .addTo(mapa).bindTooltip(lugar.nome, { permanent: true, direction: "top", offset: [0, -8] });
-          seguir = false; mapa.setView([lugar.lat, lugar.lng], 16);
-        }
-      };
-      lista.appendChild(el);
-    });
+    const vistos = [];
+    const avisar = () => {
+      const longe = vistos.length && vistos.every(v => distKm(perto, v) > 60);
+      const a = caixa.querySelector(".aviso");
+      a.style.display = longe ? "block" : "none";
+      a.querySelector("small").textContent = "⚠ Não achei este lugar perto de você — estes ficam em outras cidades. Toque em “🔎 Buscar mais”, digite o endereço ou use “📍 Marcar no mapa”.";
+    };
+    const acrescentar = (itens) => {
+      let novos = 0;
+      itens.forEach(lugar => {
+        if (vistos.some(v => distKm(v, lugar) < 0.05 && v.nome === lugar.nome)) return;   // repetido
+        vistos.push(lugar); novos++;
+        const el = document.createElement("div"); el.className = "item";
+        el.innerHTML = "<b></b><small></small>";
+        el.querySelector("b").textContent = lugar.nome;
+        const km = distKm(perto, lugar);
+        el.querySelector("small").textContent = lugar.detalhe + ` · a ${km < 1 ? Math.round(km * 1000) + " m" : km.toFixed(1).replace(".", ",") + " km"}`;
+        el.onclick = () => {              // só marca e mostra no mapa
+          lista.querySelectorAll(".item").forEach(i => i.classList.remove("sel")); el.classList.add("sel");
+          marcado = lugar; usar.disabled = false; usar.textContent = "✔ Usar: " + lugar.nome;
+          mostrarPrevia(lugar);
+        };
+        lista.appendChild(el);
+      });
+      avisar();
+      return novos;
+    };
+    acrescentar(l);
+    caixa.querySelector(".mais").onclick = async (ev) => {
+      const b = ev.currentTarget; b.disabled = true; b.textContent = "Buscando…";
+      let n = 0;
+      try { n = acrescentar(await buscarNominatim(t, 10, perto)); } catch (e) { b.textContent = "⚠ " + e.message; return; }
+      b.textContent = n ? `+${n} resultado(s)` : "Nada mais encontrado";
+      if (n) lista.lastElementChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+    caixa.querySelector(".nomapa").onclick = () => { fechar(); marcarNoMapa(input); };
     usar.onclick = () => {
       if (!marcado) return;
       input.value = marcado.nome; input.escolha = { ...marcado, texto: marcado.nome };
@@ -336,6 +392,8 @@ function chegou(lat, lng) {
 }
 $("btRota").onclick = tracarRota;
 ligarSugestoes($("rotaDe"), $("sugDe"));
+$("btMapaDe").onclick = () => marcarNoMapa($("rotaDe"));
+$("btMapaPara").onclick = () => marcarNoMapa($("rotaPara"));
 ligarSugestoes($("rotaPara"), $("sugPara"));
 $("btLimparRota").onclick = () => { rota = null; ls.del("anjo.rota"); desenharRota(); enviarRota(); };
 try { rota = JSON.parse(ls.get("anjo.rota") || "null"); } catch { rota = null; }
