@@ -58,6 +58,7 @@
   <h1 id="nome">Câmera</h1>
   <div class="sub" id="validade"></div>
   <div id="link" class="link">Transmissão parada</div>
+  <button id="btAtualizar" class="verde" style="display:none">⟳ Versão nova disponível — toque para atualizar</button>
   <div id="alerta"></div>
   <div id="tela"><video id="video" autoplay playsinline muted></video><canvas id="caixas"></canvas></div>
   <div id="cont"></div>
@@ -73,12 +74,13 @@
   <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
   <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
   <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
-  <p class="nota" style="color:#22c55e">Versão da página: <b>C3</b> (escolha de lugar com botão “Usar”)</p>
+  <p class="nota" style="color:#22c55e">Versão da página: <b id="versaoPag"></b> · atualiza sozinha</p>
   <p class="nota">Versão web para iPhone enquanto o app nativo não é instalado. Mantenha esta tela aberta: o iPhone
     pausa a câmera de páginas web quando outro app é aberto ou a tela bloqueia.</p>
 </div>
 
 <script>
+const VERSAO_PAGINA = "C4";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -480,8 +482,29 @@ function desenhar() {
 }
 requestAnimationFrame(desenhar);
 
+/* ---------- atualização automática ----------
+   A cada minuto confere camera_versao.json. Parada: recarrega sozinha (o pareamento fica guardado).
+   Transmitindo: só mostra o botão, para não cortar a transmissão; atualiza ao parar. */
+$("versaoPag").textContent = VERSAO_PAGINA;
+let versaoNova = null;
+function recarregar() { location.replace(location.pathname + "?v=" + encodeURIComponent(versaoNova || Date.now())); }
+async function conferirVersao() {
+  try {
+    const d = await (await fetch("camera_versao.json?t=" + Date.now(), { cache: "no-store" })).json();
+    if (d.v && d.v !== VERSAO_PAGINA) {
+      versaoNova = d.v;
+      if (!ativo) recarregar();
+      else $("btAtualizar").style.display = "block";
+    }
+  } catch {}
+}
+$("btAtualizar").onclick = async () => { await parar(); recarregar(); };
+setInterval(conferirVersao, 60000);
+setTimeout(conferirVersao, 5000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") conferirVersao(); });
+
 /* ---------- botões ---------- */
-$("btIniciar").onclick = () => ativo ? parar() : iniciar();
+$("btIniciar").onclick = async () => { if (ativo) { await parar(); if (versaoNova) recarregar(); } else iniciar(); };
 $("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar:gravar }); };
 $("btCam").onclick = async () => {
   frontal = !frontal;
