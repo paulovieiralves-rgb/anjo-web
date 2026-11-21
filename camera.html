@@ -84,7 +84,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C8";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C9";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -563,7 +563,7 @@ function resumo(c) {
 }
 function mostrarAlerta(m) {
   const el = $("alerta");
-  el.textContent = "ALERTA: " + m.alertas.join(" | ") + (m.cam !== par.nome ? ` (${m.cam})` : "");
+  el.textContent = "ALERTA" + (m.virtual ? " · " + m.virtual : "") + ": " + m.alertas.join(" | ") + (m.cam !== par.nome ? ` (${m.cam})` : "");
   el.style.background = m.alertas.every(a => ATENCAO.has(a)) ? "#a16207" : "#dc2626";
   el.style.display = "block"; alertaAte = Date.now() + 8000; alertaNoMapa(m);
   m.falas.forEach((f, i) => falar(f, m.grave ? 1 : 2, m.alertas[i] || f, 10000));
@@ -574,7 +574,7 @@ function mostrarAlerta(m) {
 setInterval(() => {
   const recente = ack && Date.now() - ackT < 3500;
   const [cls, txt] = !ativo ? ["", "Transmissão parada"]
-    : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.gravando ? " · ⏺ gravando" : ""}`]
+    : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.virtual ? " · 📷 " + ack.virtual : ""}${ack.gravando ? " · ⏺ gravando" : ""}`]
     : recente ? ["warn", "● Central conectada, mas sem imagem"]
     : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
   $("link").className = "link " + cls; $("link").textContent = txt;
