@@ -24,6 +24,11 @@
   #tela { position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; }
   #tela video, #tela canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
   #cont { margin:10px 0 4px; }
+  .rota { background:var(--painel); border-radius:12px; padding:10px; margin-top:10px; }
+  .rota input, .rota select { width:100%; background:#0f172a; color:var(--txt); border:1px solid #334155; border-radius:8px;
+    padding:10px; font-size:16px; margin-top:6px; }
+  .rota .linha button { margin-top:8px; padding:11px; }
+  #rotaInfo { margin-top:8px; font-size:14px; }
   #mapa { height:240px; border-radius:12px; margin-top:10px; background:#1e293b; }
   .pin-alerta { background:#ef4444; color:#fff; border-radius:50%; width:22px; height:22px; line-height:22px; text-align:center; font-weight:700; border:2px solid #fff; }
   button { width:100%; border:0; border-radius:10px; padding:14px; font-size:15px; font-weight:600; color:#fff; background:#334155; margin-top:10px; }
@@ -48,6 +53,13 @@
   <div id="cont"></div>
   <div class="sub" id="gpsInfo"></div>
   <div id="mapa"></div>
+  <div class="rota">
+    <select id="rotaModo"><option value="foot">🚶 A pé</option><option value="bike">🚲 Bike</option><option value="car">🚗 Carro</option></select>
+    <input id="rotaDe" placeholder="Origem (vazio = minha localização)" autocomplete="street-address">
+    <input id="rotaPara" placeholder="Destino: endereço ou lugar" autocomplete="street-address">
+    <div class="linha"><button id="btRota" class="verde">🧭 Traçar rota</button><button id="btLimparRota">Limpar</button></div>
+    <div id="rotaInfo" class="sub"></div>
+  </div>
   <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
   <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
   <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
@@ -61,7 +73,7 @@ const CENTRAL = "anjo-central";
 const NOMES = { person:"pessoa", bicycle:"bicicleta", car:"carro", motorcycle:"moto", bus:"ônibus", truck:"caminhão",
   knife:"faca", backpack:"mochila", handbag:"bolsa" };
 const PLURAL = { person:"pessoas", bicycle:"bicicletas", car:"carros", motorcycle:"motos", bus:"ônibus", truck:"caminhões" };
-const ATENCAO = new Set(["PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"]);
+const ATENCAO = new Set(["FORA DA ROTA","PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"]);
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
              set(k, v) { try { localStorage.setItem(k, v); } catch {} }, del(k) { try { localStorage.removeItem(k); } catch {} } };
 
@@ -90,7 +102,7 @@ else {
 }
 
 /* ---------- mapa: percurso e posição atual ---------- */
-let mapa = null, rota = null, eu = null, seguir = true, percurso = [];
+let mapa = null, trilha = null, eu = null, seguir = true, percurso = [];
 function iniciarMapa() {
   if (mapa || !window.L || !par) return;
   mapa = L.map("mapa", { zoomControl: true }).setView([-22.9847, -43.2003], 16);
@@ -99,7 +111,7 @@ function iniciarMapa() {
   const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     { maxZoom: 19, attribution: "Tiles © Esri" });
   L.control.layers({ "Ruas": ruas, "Satélite": sat }).addTo(mapa);
-  rota = L.polyline([], { color: "#2563eb", weight: 5 }).addTo(mapa);
+  trilha = L.polyline([], { color: "#2563eb", weight: 5 }).addTo(mapa);
   mapa.on("dragstart", () => seguir = false);
   const Centro = L.Control.extend({ onAdd() { const b = L.DomUtil.create("a", "leaflet-bar");
     b.textContent = "◎"; b.href = "#"; b.style.cssText = "width:30px;height:30px;line-height:30px;text-align:center;background:#fff;color:#000;font-size:18px";
@@ -110,7 +122,7 @@ function iniciarMapa() {
 function posicaoNoMapa(lat, lng) {
   if (!mapa) return;
   percurso.push([lat, lng]); if (percurso.length > 5000) percurso.shift();
-  rota.setLatLngs(percurso);
+  trilha.setLatLngs(percurso);
   if (!eu) eu = L.circleMarker([lat, lng], { radius: 8, color: "#fff", weight: 2, fillColor: "#ef4444", fillOpacity: 1 }).addTo(mapa);
   else eu.setLatLng([lat, lng]);
   if (seguir) mapa.setView([lat, lng], Math.max(mapa.getZoom(), 16));
@@ -122,6 +134,75 @@ function alertaNoMapa(m) {
 }
 iniciarMapa();
 window.addEventListener("load", iniciarMapa);
+
+/* ---------- rota de um endereço a outro ----------
+   Endereço → coordenada: Nominatim (OpenStreetMap). Trajeto: OSRM do OpenStreetMap (a pé, bike, carro).
+   Serviços públicos e gratuitos, adequados à prova de conceito. */
+let rota = null, rotaLinha = null, rotaMarcas = [];
+const PERFIL = { foot: "routed-foot", bike: "routed-bike", car: "routed-car" };
+async function geocodificar(texto) {
+  const perto = eu ? eu.getLatLng() : null;
+  let url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&accept-language=pt-BR&q=" + encodeURIComponent(texto);
+  if (perto) url += `&viewbox=${perto.lng - 0.4},${perto.lat + 0.4},${perto.lng + 0.4},${perto.lat - 0.4}`;
+  const r = await fetch(url, { headers: { "Accept": "application/json" } });
+  const d = await r.json();
+  if (!d.length) throw new Error(`Endereço não encontrado: "${texto}"`);
+  return { lat: +d[0].lat, lng: +d[0].lon, nome: d[0].display_name.split(",").slice(0, 3).join(",") };
+}
+async function tracarRota() {
+  const de = $("rotaDe").value.trim(), para = $("rotaPara").value.trim(), modo = $("rotaModo").value;
+  if (!para) { $("rotaInfo").textContent = "Digite o destino."; return; }
+  $("rotaInfo").textContent = "Procurando endereços…";
+  try {
+    let origem;
+    if (de) origem = await geocodificar(de);
+    else if (eu) origem = { ...eu.getLatLng(), nome: "Minha localização" };
+    else origem = await new Promise((ok, falha) => navigator.geolocation.getCurrentPosition(
+      p => ok({ lat: p.coords.latitude, lng: p.coords.longitude, nome: "Minha localização" }),
+      () => falha(new Error("Sem localização: ligue o GPS ou digite a origem.")), { enableHighAccuracy: true, timeout: 10000 }));
+    const destino = await geocodificar(para);
+    $("rotaInfo").textContent = "Calculando o trajeto…";
+    const r = await fetch(`https://routing.openstreetmap.de/${PERFIL[modo]}/route/v1/driving/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson`);
+    const d = await r.json();
+    if (d.code !== "Ok" || !d.routes || !d.routes.length) throw new Error("Não foi possível calcular a rota.");
+    const rt = d.routes[0];
+    rota = { modo, origem, destino, distancia: rt.distance, duracao: rt.duration,
+             coords: rt.geometry.coordinates.map(([lng, lat]) => [lat, lng]) };
+    ls.set("anjo.rota", JSON.stringify(rota));
+    desenharRota(true); enviarRota();
+    falar(`Rota traçada: ${textoDist(rota.distancia)}, cerca de ${Math.max(1, Math.round(rota.duracao / 60))} minutos.`, 6, "rota", 0);
+  } catch (e) { $("rotaInfo").textContent = "⚠ " + (e.message || e); }
+}
+function textoDist(m) { return m >= 1000 ? (m / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(m) + " m"; }
+function desenharRota(enquadrar) {
+  if (!mapa) return;
+  if (rotaLinha) rotaLinha.remove(); rotaMarcas.forEach(m => m.remove()); rotaLinha = null; rotaMarcas = [];
+  if (!rota) { $("rotaInfo").textContent = ""; return; }
+  rotaLinha = L.polyline(rota.coords, { color: "#a855f7", weight: 6, opacity: 0.8 }).addTo(mapa);
+  const pino = (ll, cor, txt) => L.circleMarker(ll, { radius: 9, color: "#fff", weight: 2, fillColor: cor, fillOpacity: 1 }).addTo(mapa).bindTooltip(txt);
+  rotaMarcas = [pino([rota.origem.lat, rota.origem.lng], "#22c55e", "Origem: " + rota.origem.nome),
+                pino([rota.destino.lat, rota.destino.lng], "#a855f7", "Destino: " + rota.destino.nome)];
+  if (enquadrar) { seguir = false; mapa.fitBounds(rotaLinha.getBounds(), { padding: [20, 20] }); }
+  const nomes = { foot: "a pé", bike: "de bike", car: "de carro" };
+  $("rotaInfo").innerHTML = `🧭 <b>${textoDist(rota.distancia)}</b> · ${Math.max(1, Math.round(rota.duracao / 60))} min ${nomes[rota.modo]}<br>até ${rota.destino.nome}`;
+  $("rotaModo").value = rota.modo;
+}
+function enviarRota() {
+  if (!rota) { enviar({ tipo: "rota", coords: [] }); return; }
+  const passo = Math.max(1, Math.ceil(rota.coords.length / 400));   // até ~400 pontos
+  const c = rota.coords.filter((_, i) => i % passo === 0 || i === rota.coords.length - 1).map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]);
+  enviar({ tipo: "rota", coords: c, modo: rota.modo, destino: rota.destino.nome });
+}
+function chegou(lat, lng) {
+  if (!rota) return;
+  const d = mapa.distance([lat, lng], [rota.destino.lat, rota.destino.lng]);
+  if (d < 40) falar("Você chegou ao destino.", 2, "chegada", 600000);
+}
+$("btRota").onclick = tracarRota;
+$("rotaPara").addEventListener("keydown", e => { if (e.key === "Enter") tracarRota(); });
+$("btLimparRota").onclick = () => { rota = null; ls.del("anjo.rota"); desenharRota(); enviarRota(); };
+try { rota = JSON.parse(ls.get("anjo.rota") || "null"); } catch { rota = null; }
+if (rota) { desenharRota(true); }
 
 /* ---------- voz ---------- */
 const MODOS = ["silencioso", "alertas", "resumo"];
@@ -164,7 +245,7 @@ async function conectar() {
     videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution },
     publishDefaults: { simulcast:false, videoEncoding: { maxBitrate: 900000, maxFramerate: 15 } } });
   room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar:gravar }))
-      .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) enviar({ tipo:"gravar", ligar:gravar }); })
+      .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar:gravar }); enviarRota(); } })
       .on(R.RoomEvent.Disconnected, motivo => {
         $("video").srcObject = null;
         if (ativo && motivo !== R.DisconnectReason.CLIENT_INITIATED) setTimeout(() => conectar().catch(() => {}), 3000);
@@ -182,7 +263,7 @@ async function conectar() {
     await room.localParticipant.setMicrophoneEnabled(true);
     const pub = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
-    enviar({ tipo:"gravar", ligar:gravar });
+    enviar({ tipo:"gravar", ligar:gravar }); enviarRota();
   } catch (e) {
     console.log(e); $("link").textContent = "Falha ao conectar: " + (e.message || e);
     if (ativo) setTimeout(() => conectar().catch(() => {}), 5000);
@@ -199,7 +280,7 @@ async function iniciar() {
     if (p.coords.accuracy > 35) return;
     velocidade = Math.max(0, p.coords.speed || 0);
     const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
-    enviar(g); posicaoNoMapa(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h`;
+    enviar(g); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h`;
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
 }
 async function parar() {
