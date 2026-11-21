@@ -84,7 +84,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C9";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C10";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -155,10 +155,19 @@ function posicaoNoMapa(lat, lng) {
   else eu.setLatLng([lat, lng]);
   if (seguir) mapa.setView([lat, lng], Math.max(mapa.getZoom(), 16));
 }
+// Alertas no mapa agrupados: alertas a menos de 60 m de um pino existente entram nele (o número conta).
+const pinosAlerta = [];
 function alertaNoMapa(m) {
   if (!mapa || !m.pos || m.pos.lat == null) return;
-  L.marker([m.pos.lat, m.pos.lng], { icon: L.divIcon({ className: "", html: '<div class="pin-alerta">!</div>', iconSize: [22, 22] }) })
-    .addTo(mapa).bindPopup(new Date(m.t).toLocaleTimeString("pt-BR") + " · " + m.alertas.join(", "));
+  const ll = L.latLng(m.pos.lat, m.pos.lng);
+  const linha = new Date(m.t).toLocaleTimeString("pt-BR") + " · " + (m.virtual ? m.virtual + " · " : "") + m.alertas.join(", ");
+  let p = pinosAlerta.find(x => x.ll.distanceTo(ll) < 60);
+  if (!p) { p = { ll, linhas: [], grave: false, marcador: L.marker(ll).addTo(mapa) }; pinosAlerta.push(p); }
+  p.linhas.unshift(linha); p.grave = p.grave || m.grave;
+  const n = p.linhas.length;
+  p.marcador.setIcon(L.divIcon({ className: "", iconSize: [24, 24],
+    html: `<div class="pin-alerta" style="background:${p.grave ? "#ef4444" : "#d97706"};width:24px;height:24px;line-height:24px">${n > 1 ? n : "!"}</div>` }));
+  p.marcador.bindPopup(p.linhas.slice(0, 8).join("<br>") + (n > 8 ? `<br>… e mais ${n - 8}` : ""));
 }
 iniciarMapa();
 window.addEventListener("load", iniciarMapa);
