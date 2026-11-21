@@ -26,12 +26,15 @@
   #cont { margin:10px 0 4px; }
   .rota { background:var(--painel); border-radius:12px; padding:10px; margin-top:10px; }
   .campo { position:relative; }
-  .sugestoes { -webkit-overflow-scrolling:touch; overscroll-behavior:contain; position:absolute; left:0; right:0; top:100%; z-index:1000; background:#0f172a; border:1px solid #334155;
-    border-radius:8px; margin-top:2px; max-height:260px; overflow:auto; display:none; box-shadow:0 8px 20px rgba(0,0,0,.5); }
-  .sugestoes div { padding:9px 10px; border-bottom:1px solid #1e293b; cursor:pointer; }
-  .sugestoes div:active, .sugestoes div:hover { background:#1e293b; }
+  .sugestoes { display:none; background:#0f172a; border:1px solid #334155; border-radius:8px; margin-top:4px; }
+  .sugestoes .lista { max-height:55vh; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  .sugestoes .item, .sugestoes .msg { padding:10px; border-bottom:1px solid #1e293b; }
+  .sugestoes .item.sel { background:#14532d; outline:2px solid #22c55e; outline-offset:-2px; }
   .sugestoes b { display:block; font-weight:600; }
   .sugestoes small { color:var(--sub); }
+  .sugestoes .acoes { display:flex; gap:8px; padding:8px; position:sticky; bottom:0; background:#0f172a; }
+  .sugestoes .acoes button { margin-top:0; padding:11px; flex:1; }
+  .sugestoes .acoes .usar { flex:2; } .sugestoes .acoes button:disabled { opacity:.45; }
   .rota input, .rota select { width:100%; background:#0f172a; color:var(--txt); border:1px solid #334155; border-radius:8px;
     padding:10px; font-size:16px; margin-top:6px; }
   .rota .linha button { margin-top:8px; padding:11px; }
@@ -226,39 +229,56 @@ async function geocodificar(texto, campo) {
   if (!l.length) throw new Error(`Não encontrado: "${texto}". Tente incluir rua e bairro, ou escolha uma sugestão da lista.`);
   return l[0];
 }
+// Lista de resultados dentro da página. Tocar num item só MARCA (e mostra no mapa);
+// o lugar é aceito apenas no botão "✔ Usar este lugar". Assim dá para rolar e procurar com calma.
+let pinoPrevia = null;
 function ligarSugestoes(input, caixa) {
-  let espera = null, pedido = 0;
-  const fechar = () => { caixa.style.display = "none"; };
-  input.addEventListener("input", () => {
-    input.escolha = null; clearTimeout(espera);
+  let espera = null, pedido = 0, marcado = null;
+  const fechar = () => { caixa.style.display = "none"; caixa.innerHTML = ""; marcado = null; if (pinoPrevia) { pinoPrevia.remove(); pinoPrevia = null; } };
+  const aviso = (txt) => { caixa.innerHTML = '<div class="msg"><small></small></div><div class="acoes"><button class="fechar">✕ Fechar</button></div>';
+    caixa.querySelector("small").textContent = txt; caixa.querySelector(".fechar").onclick = fechar; caixa.style.display = "block"; };
+  const buscar = async (forcado) => {
+    if (!forcado && document.activeElement !== input) return;   // usuário já foi para outro campo
     const t = input.value.trim();
     if (t.length < 3) { fechar(); return; }
-    espera = setTimeout(async () => {
-      const meu = ++pedido;
-      let l = [];
-      try { l = await buscarLugares(t); }
-      catch (e) { caixa.innerHTML = '<div><small></small></div>'; caixa.querySelector("small").textContent = "⚠ " + e.message; caixa.style.display = "block"; return; }
-      if (meu !== pedido || input.value.trim() !== t || document.activeElement !== input) return;
-      if (!l.length) { caixa.innerHTML = '<div><small>Nada encontrado. Tente incluir o bairro.</small></div>'; caixa.style.display = "block"; return; }
-      caixa.innerHTML = "";
-      l.forEach(lugar => {
-        const el = document.createElement("div");
-        el.innerHTML = "<b></b><small></small>";
-        el.querySelector("b").textContent = lugar.nome; el.querySelector("small").textContent = lugar.detalhe;
-        // rolar a lista com o dedo não escolhe nada; só o toque (click) escolhe
-        el.onmousedown = ev => ev.preventDefault();   // mantém o campo em foco até o toque terminar
-        el.onclick = ev => {
-          ev.preventDefault();
-          input.value = lugar.nome; input.escolha = { ...lugar, texto: lugar.nome }; fechar();
-          if (mapa) mapa.setView([lugar.lat, lugar.lng], 17);
-        };
-        caixa.appendChild(el);
-      });
-      caixa.style.display = "block";
-    }, 450);
-  });
-  input.addEventListener("blur", () => setTimeout(fechar, 200));
-  input.addEventListener("focus", () => document.querySelectorAll(".sugestoes").forEach(c => { if (c !== caixa) c.style.display = "none"; }));
+    const meu = ++pedido;
+    aviso("Procurando…");
+    let l = [];
+    try { l = await buscarLugares(t, 10); } catch (e) { if (meu === pedido) aviso("⚠ " + e.message); return; }
+    if (meu !== pedido || input.value.trim() !== t) return;
+    if (!l.length) { aviso("Nada encontrado. Tente incluir o bairro (ex.: Pobre Juan Ipanema)."); return; }
+    const perto = eu ? eu.getLatLng() : null;
+    caixa.innerHTML = '<div class="lista"></div><div class="acoes"><button class="usar verde" disabled>✔ Usar este lugar</button><button class="fechar">✕ Fechar</button></div>';
+    const lista = caixa.querySelector(".lista"), usar = caixa.querySelector(".usar");
+    l.forEach(lugar => {
+      const el = document.createElement("div"); el.className = "item";
+      el.innerHTML = "<b></b><small></small>";
+      el.querySelector("b").textContent = lugar.nome;
+      const km = perto ? distKm(perto, lugar) : null;
+      el.querySelector("small").textContent = lugar.detalhe + (km !== null ? ` · a ${km < 1 ? Math.round(km * 1000) + " m" : km.toFixed(1).replace(".", ",") + " km"}` : "");
+      el.onclick = () => {              // só marca e mostra no mapa
+        lista.querySelectorAll(".item").forEach(i => i.classList.remove("sel")); el.classList.add("sel");
+        marcado = lugar; usar.disabled = false; usar.textContent = "✔ Usar: " + lugar.nome;
+        if (mapa) {
+          if (pinoPrevia) pinoPrevia.remove();
+          pinoPrevia = L.circleMarker([lugar.lat, lugar.lng], { radius: 10, color: "#fff", weight: 3, fillColor: "#f59e0b", fillOpacity: 1 })
+            .addTo(mapa).bindTooltip(lugar.nome, { permanent: true, direction: "top", offset: [0, -8] });
+          seguir = false; mapa.setView([lugar.lat, lugar.lng], 16);
+        }
+      };
+      lista.appendChild(el);
+    });
+    usar.onclick = () => {
+      if (!marcado) return;
+      input.value = marcado.nome; input.escolha = { ...marcado, texto: marcado.nome };
+      fechar(); input.blur();
+    };
+    caixa.querySelector(".fechar").onclick = fechar;
+    caixa.style.display = "block";
+  };
+  input.addEventListener("input", () => { input.escolha = null; clearTimeout(espera); espera = setTimeout(() => buscar(false), 600); });
+  input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(espera); input.blur(); buscar(true); } });
+  input.addEventListener("focus", () => document.querySelectorAll(".sugestoes").forEach(c => { if (c !== caixa) { c.style.display = "none"; c.innerHTML = ""; } }));
 }
 async function tracarRota() {
   const de = $("rotaDe").value.trim(), para = $("rotaPara").value.trim(), modo = $("rotaModo").value;
@@ -314,7 +334,6 @@ function chegou(lat, lng) {
 $("btRota").onclick = tracarRota;
 ligarSugestoes($("rotaDe"), $("sugDe"));
 ligarSugestoes($("rotaPara"), $("sugPara"));
-$("rotaPara").addEventListener("keydown", e => { if (e.key === "Enter") { $("sugPara").style.display = "none"; tracarRota(); } });
 $("btLimparRota").onclick = () => { rota = null; ls.del("anjo.rota"); desenharRota(); enviarRota(); };
 try { rota = JSON.parse(ls.get("anjo.rota") || "null"); } catch { rota = null; }
 if (rota) { desenharRota(true); }
