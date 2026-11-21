@@ -25,6 +25,13 @@
   #tela video, #tela canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
   #cont { margin:10px 0 4px; }
   .rota { background:var(--painel); border-radius:12px; padding:10px; margin-top:10px; }
+  .campo { position:relative; }
+  .sugestoes { position:absolute; left:0; right:0; top:100%; z-index:1000; background:#0f172a; border:1px solid #334155;
+    border-radius:8px; margin-top:2px; max-height:260px; overflow:auto; display:none; box-shadow:0 8px 20px rgba(0,0,0,.5); }
+  .sugestoes div { padding:9px 10px; border-bottom:1px solid #1e293b; cursor:pointer; }
+  .sugestoes div:active, .sugestoes div:hover { background:#1e293b; }
+  .sugestoes b { display:block; font-weight:600; }
+  .sugestoes small { color:var(--sub); }
   .rota input, .rota select { width:100%; background:#0f172a; color:var(--txt); border:1px solid #334155; border-radius:8px;
     padding:10px; font-size:16px; margin-top:6px; }
   .rota .linha button { margin-top:8px; padding:11px; }
@@ -55,8 +62,8 @@
   <div id="mapa"></div>
   <div class="rota">
     <select id="rotaModo"><option value="foot">🚶 A pé</option><option value="bike">🚲 Bike</option><option value="car">🚗 Carro</option></select>
-    <input id="rotaDe" placeholder="Origem (vazio = minha localização)" autocomplete="street-address">
-    <input id="rotaPara" placeholder="Destino: endereço ou lugar" autocomplete="street-address">
+    <div class="campo"><input id="rotaDe" placeholder="Origem: endereço ou lugar (vazio = minha localização)" autocomplete="off"><div class="sugestoes" id="sugDe"></div></div>
+    <div class="campo"><input id="rotaPara" placeholder="Destino: endereço, restaurante, parque…" autocomplete="off"><div class="sugestoes" id="sugPara"></div></div>
     <div class="linha"><button id="btRota" class="verde">🧭 Traçar rota</button><button id="btLimparRota">Limpar</button></div>
     <div id="rotaInfo" class="sub"></div>
   </div>
@@ -140,14 +147,79 @@ window.addEventListener("load", iniciarMapa);
    Serviços públicos e gratuitos, adequados à prova de conceito. */
 let rota = null, rotaLinha = null, rotaMarcas = [];
 const PERFIL = { foot: "routed-foot", bike: "routed-bike", car: "routed-car" };
-async function geocodificar(texto) {
-  const perto = eu ? eu.getLatLng() : null;
-  let url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&accept-language=pt-BR&q=" + encodeURIComponent(texto);
-  if (perto) url += `&viewbox=${perto.lng - 0.4},${perto.lat + 0.4},${perto.lng + 0.4},${perto.lat - 0.4}`;
-  const r = await fetch(url, { headers: { "Accept": "application/json" } });
-  const d = await r.json();
-  if (!d.length) throw new Error(`Endereço não encontrado: "${texto}"`);
-  return { lat: +d[0].lat, lng: +d[0].lon, nome: d[0].display_name.split(",").slice(0, 3).join(",") };
+/* Busca de endereços e estabelecimentos (restaurantes, parques, lojas…) com sugestões enquanto digita.
+   Photon (komoot, dados do OpenStreetMap), priorizando o que está perto; Nominatim como reserva. */
+const TIPOS = { restaurant:"Restaurante", cafe:"Café", bar:"Bar", pub:"Bar", fast_food:"Lanchonete", ice_cream:"Sorveteria",
+  park:"Parque", garden:"Jardim", playground:"Parquinho", beach:"Praia", square:"Praça", pitch:"Quadra", sports_centre:"Centro esportivo",
+  hospital:"Hospital", clinic:"Clínica", pharmacy:"Farmácia", doctors:"Consultório", dentist:"Dentista",
+  school:"Escola", university:"Universidade", college:"Faculdade", kindergarten:"Creche", library:"Biblioteca",
+  supermarket:"Supermercado", mall:"Shopping", bakery:"Padaria", convenience:"Conveniência", clothes:"Loja de roupas",
+  bank:"Banco", atm:"Caixa eletrônico", fuel:"Posto de combustível", parking:"Estacionamento", hotel:"Hotel", hostel:"Hostel",
+  museum:"Museu", theatre:"Teatro", cinema:"Cinema", place_of_worship:"Templo/Igreja", police:"Polícia", fire_station:"Bombeiros",
+  station:"Estação", bus_station:"Rodoviária", subway_entrance:"Metrô", bus_stop:"Ponto de ônibus", attraction:"Atração turística",
+  viewpoint:"Mirante", gym:"Academia", fitness_centre:"Academia", house:"Endereço", residential:"Endereço",
+  street:"Rua", primary:"Avenida", secondary:"Rua", tertiary:"Rua", suburb:"Bairro", neighbourhood:"Bairro", city:"Cidade" };
+function rotuloPhoton(pr) {
+  const tipo = TIPOS[pr.osm_value] || (pr.osm_key === "highway" ? "Rua" : pr.osm_key === "shop" ? "Loja" :
+    pr.osm_key === "amenity" ? "Estabelecimento" : pr.osm_key === "leisure" ? "Lazer" : pr.osm_key === "tourism" ? "Turismo" : "Local");
+  const rua = [pr.street, pr.housenumber].filter(Boolean).join(", ");
+  const onde = [rua, pr.district || pr.locality, pr.city].filter(Boolean).join(" · ");
+  const nome = pr.name || rua || pr.city || "Local";
+  return { nome, detalhe: `${tipo}${onde && onde !== nome ? " · " + onde : ""}` };
+}
+async function buscarLugares(texto, limite = 6) {
+  const perto = eu ? eu.getLatLng() : (rota ? { lat: rota.origem.lat, lng: rota.origem.lng } : { lat: -22.9847, lng: -43.2003 });
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(texto)}&limit=${limite}&lat=${perto.lat}&lon=${perto.lng}&location_bias_scale=0.5`);
+    const d = await r.json();
+    const lista = (d.features || []).filter(f => !f.properties.countrycode || f.properties.countrycode === "BR").map(f => {
+      const { nome, detalhe } = rotuloPhoton(f.properties);
+      return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], nome, detalhe };
+    });
+    if (lista.length) return lista;
+  } catch (e) { console.log("photon", e); }
+  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
+  url += `&viewbox=${perto.lng - 0.4},${perto.lat + 0.4},${perto.lng + 0.4},${perto.lat - 0.4}`;
+  const d = await (await fetch(url, { headers: { "Accept": "application/json" } })).json();
+  return d.map(x => ({ lat: +x.lat, lng: +x.lon, nome: x.name || x.display_name.split(",")[0],
+    detalhe: (TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + x.display_name.split(",").slice(1, 3).join(",").trim() }));
+}
+async function geocodificar(texto, campo) {
+  // se o usuário escolheu uma sugestão e não mudou o texto, usa a escolha
+  if (campo && campo.escolha && campo.escolha.texto === texto) return campo.escolha;
+  const l = await buscarLugares(texto, 1);
+  if (!l.length) throw new Error(`Não encontrado: "${texto}"`);
+  return l[0];
+}
+function ligarSugestoes(input, caixa) {
+  let espera = null, pedido = 0;
+  const fechar = () => { caixa.style.display = "none"; };
+  input.addEventListener("input", () => {
+    input.escolha = null; clearTimeout(espera);
+    const t = input.value.trim();
+    if (t.length < 3) { fechar(); return; }
+    espera = setTimeout(async () => {
+      const meu = ++pedido;
+      let l = [];
+      try { l = await buscarLugares(t); } catch {}
+      if (meu !== pedido || input.value.trim() !== t) return;
+      if (!l.length) { caixa.innerHTML = '<div><small>Nada encontrado. Tente incluir o bairro.</small></div>'; caixa.style.display = "block"; return; }
+      caixa.innerHTML = "";
+      l.forEach(lugar => {
+        const el = document.createElement("div");
+        el.innerHTML = "<b></b><small></small>";
+        el.querySelector("b").textContent = lugar.nome; el.querySelector("small").textContent = lugar.detalhe;
+        el.onmousedown = el.ontouchstart = ev => {
+          ev.preventDefault();
+          input.value = lugar.nome; input.escolha = { ...lugar, texto: lugar.nome }; fechar();
+          if (mapa) mapa.setView([lugar.lat, lugar.lng], 17);
+        };
+        caixa.appendChild(el);
+      });
+      caixa.style.display = "block";
+    }, 450);
+  });
+  input.addEventListener("blur", () => setTimeout(fechar, 200));
 }
 async function tracarRota() {
   const de = $("rotaDe").value.trim(), para = $("rotaPara").value.trim(), modo = $("rotaModo").value;
@@ -155,12 +227,12 @@ async function tracarRota() {
   $("rotaInfo").textContent = "Procurando endereços…";
   try {
     let origem;
-    if (de) origem = await geocodificar(de);
+    if (de) origem = await geocodificar(de, $("rotaDe"));
     else if (eu) origem = { ...eu.getLatLng(), nome: "Minha localização" };
     else origem = await new Promise((ok, falha) => navigator.geolocation.getCurrentPosition(
       p => ok({ lat: p.coords.latitude, lng: p.coords.longitude, nome: "Minha localização" }),
       () => falha(new Error("Sem localização: ligue o GPS ou digite a origem.")), { enableHighAccuracy: true, timeout: 10000 }));
-    const destino = await geocodificar(para);
+    const destino = await geocodificar(para, $("rotaPara"));
     $("rotaInfo").textContent = "Calculando o trajeto…";
     const r = await fetch(`https://routing.openstreetmap.de/${PERFIL[modo]}/route/v1/driving/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson`);
     const d = await r.json();
@@ -184,7 +256,8 @@ function desenharRota(enquadrar) {
                 pino([rota.destino.lat, rota.destino.lng], "#a855f7", "Destino: " + rota.destino.nome)];
   if (enquadrar) { seguir = false; mapa.fitBounds(rotaLinha.getBounds(), { padding: [20, 20] }); }
   const nomes = { foot: "a pé", bike: "de bike", car: "de carro" };
-  $("rotaInfo").innerHTML = `🧭 <b>${textoDist(rota.distancia)}</b> · ${Math.max(1, Math.round(rota.duracao / 60))} min ${nomes[rota.modo]}<br>até ${rota.destino.nome}`;
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]);
+  $("rotaInfo").innerHTML = `🧭 <b>${textoDist(rota.distancia)}</b> · ${Math.max(1, Math.round(rota.duracao / 60))} min ${nomes[rota.modo]}<br>até ${esc(rota.destino.nome)}`;
   $("rotaModo").value = rota.modo;
 }
 function enviarRota() {
@@ -199,7 +272,9 @@ function chegou(lat, lng) {
   if (d < 40) falar("Você chegou ao destino.", 2, "chegada", 600000);
 }
 $("btRota").onclick = tracarRota;
-$("rotaPara").addEventListener("keydown", e => { if (e.key === "Enter") tracarRota(); });
+ligarSugestoes($("rotaDe"), $("sugDe"));
+ligarSugestoes($("rotaPara"), $("sugPara"));
+$("rotaPara").addEventListener("keydown", e => { if (e.key === "Enter") { $("sugPara").style.display = "none"; tracarRota(); } });
 $("btLimparRota").onclick = () => { rota = null; ls.del("anjo.rota"); desenharRota(); enviarRota(); };
 try { rota = JSON.parse(ls.get("anjo.rota") || "null"); } catch { rota = null; }
 if (rota) { desenharRota(true); }
