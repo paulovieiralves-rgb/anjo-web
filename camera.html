@@ -84,7 +84,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C7";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C8";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -215,7 +215,7 @@ async function buscarNominatim(texto, limite, perto) {
     const a = x.address || {}, num = a.house_number;
     const rua = [a.road, num].filter(Boolean).join(", ");
     const lugar = x.name && x.name !== a.road ? x.name : null;
-    return { lat: +x.lat, lng: +x.lon, exato: !!num,
+    return { lat: +x.lat, lng: +x.lon, exato: !!num, numero: num || "", via: a.road || "",
       nome: lugar || rua || x.display_name.split(",").slice(0, 2).join(",").trim(),
       detalhe: (lugar && TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + [lugar ? rua : null, a.suburb || a.neighbourhood, a.city || a.town].filter(Boolean).join(" · ") };
   });
@@ -251,9 +251,34 @@ async function buscarLugares(texto, limite = 6, explicito = false) {
   if (erro) throw erro;
   return [];
 }
+/* Endereço com número: só vale resultado com EXATAMENTE o número digitado.
+   Tenta o texto como veio, depois com "Rua" na frente e com o número no fim; se nenhuma tentativa
+   achar o número, devolve a rua (posição aproximada) avisando. Nunca troca por estabelecimento vizinho. */
+const TIPO_VIA = /^(rua|r\.|av\.?|avenida|travessa|tv\.?|estrada|praça|praca|alameda|largo|ladeira|rodovia)\b/i;
+async function localizarEndereco(texto, perto) {
+  const numero = (texto.match(/\b(\d{1,5})\b/) || [])[1];
+  const semNumero = texto.replace(/[,\s]*\b\d{1,5}\b[,\s]*/, " ").replace(/\s+/g, " ").trim();
+  const tentativas = [texto];
+  if (!TIPO_VIA.test(semNumero)) tentativas.push(`Rua ${semNumero}, ${numero}`);
+  tentativas.push(`${semNumero}, ${numero}`);
+  let aproximado = null;
+  for (const q of [...new Set(tentativas)]) {
+    let r = [];
+    try { r = await buscarNominatim(q, 5, perto); } catch (e) { if (!aproximado) throw e; }
+    const certo = r.find(x => x.numero && x.numero.split(/[;,\s-]/)[0] === numero);
+    if (certo) return { lat: certo.lat, lng: certo.lng, exato: true, nome: `${certo.via || semNumero}, ${numero}`, detalhe: certo.detalhe };
+    const rua = r.find(x => x.via);
+    if (!aproximado && rua) aproximado = { lat: rua.lat, lng: rua.lng, exato: false, nome: `${rua.via}, ${numero}`, detalhe: rua.detalhe };
+  }
+  return aproximado;
+}
 async function geocodificar(texto, campo) {
   // se o usuário escolheu uma sugestão e não mudou o texto, usa a escolha
   if (campo && campo.escolha && campo.escolha.texto === texto) return campo.escolha;
+  if (/\d/.test(texto)) {
+    const e = await localizarEndereco(texto, pontoReferencia());
+    if (e) return e;
+  }
   const l = await buscarLugares(texto, 1, true);
   if (!l.length) throw new Error(`Não encontrado: "${texto}". Tente incluir rua e bairro, ou escolha uma sugestão da lista.`);
   return l[0];
@@ -333,12 +358,12 @@ function ligarSugestoes(input, caixa) {
           if (lugar.digitado && !lugar.localizado) {
             el.querySelector("small").textContent = "Localizando o número…"; usar.disabled = true;
             try {
-              const r = (await buscarNominatim(t, 3, perto)).sort((a, b) => b.exato - a.exato)[0];
+              const r = await localizarEndereco(t, perto);
               if (!r) throw new Error("não encontrado");
-              Object.assign(lugar, { lat: r.lat, lng: r.lng, localizado: true });
-              if (r.exato) { lugar.nome = r.nome; el.querySelector("b").textContent = r.nome; }
+              Object.assign(lugar, { lat: r.lat, lng: r.lng, localizado: true, nome: r.nome });
+              el.querySelector("b").textContent = r.nome;
               el.querySelector("small").textContent = r.exato ? "✔ Número localizado · " + r.detalhe
-                : "⚠ Número não cadastrado no mapa: posição aproximada na rua. Confira o ponto laranja ou use 📍 Marcar no mapa.";
+                : `⚠ O nº ${(t.match(/\b(\d{1,5})\b/) || [])[1]} não está cadastrado no mapa: posição aproximada na rua. Confira o ponto laranja ou use 📍 Marcar no mapa.`;
             } catch (e) {
               el.querySelector("small").textContent = "⚠ Não localizei este endereço. Confira a grafia ou use 📍 Marcar no mapa.";
               return;
@@ -357,7 +382,7 @@ function ligarSugestoes(input, caixa) {
       // 1º item: o endereço exatamente como digitado; ao marcar, localiza o número
       const digitado = { nome: t.replace(/\s+/g, " "), detalhe: "Endereço digitado · toque para localizar o número", digitado: true,
                          lat: perto.lat, lng: perto.lng };
-      l = l.filter(x => !(x.rua && !x.exato));            // ruas sem número ficariam no meio da rua
+      l = [];   // a lista mostra só o endereço digitado; estabelecimentos vizinhos confundem
       l.unshift(digitado);
     }
     acrescentar(l);
