@@ -75,6 +75,8 @@
 </div>
 
 <script>
+window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
+window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
 const CENTRAL = "anjo-central";
 const NOMES = { person:"pessoa", bicycle:"bicicleta", car:"carro", motorcycle:"moto", bus:"ônibus", truck:"caminhão",
@@ -167,28 +169,61 @@ function rotuloPhoton(pr) {
   const nome = pr.name || rua || pr.city || "Local";
   return { nome, detalhe: `${tipo}${onde && onde !== nome ? " · " + onde : ""}` };
 }
-async function buscarLugares(texto, limite = 6) {
+function buscarJson(url, ms = 9000) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { signal: ctl.signal, headers: { "Accept": "application/json" } })
+    .then(r => { if (!r.ok) throw new Error("serviço respondeu " + r.status); return r.json(); })
+    .catch(e => { throw new Error(e.name === "AbortError" ? "o serviço de mapas demorou a responder" : (e instanceof TypeError ? "sem conexão com o serviço de mapas — verifique a internet" : (e.message || "falha de rede"))); })
+    .finally(() => clearTimeout(t));
+}
+// "restaurante babo" → procura "babo" só entre restaurantes
+const CATEGORIAS = { restaurante:"amenity:restaurant", restaurantes:"amenity:restaurant", bar:"amenity:bar", cafe:"amenity:cafe",
+  "café":"amenity:cafe", cafeteria:"amenity:cafe", lanchonete:"amenity:fast_food", padaria:"shop:bakery", farmacia:"amenity:pharmacy",
+  "farmácia":"amenity:pharmacy", hospital:"amenity:hospital", escola:"amenity:school", banco:"amenity:bank", parque:"leisure:park",
+  praca:"place:square", "praça":"place:square", supermercado:"shop:supermarket", mercado:"shop:supermarket", shopping:"shop:mall",
+  hotel:"tourism:hotel", academia:"leisure:fitness_centre", posto:"amenity:fuel", igreja:"amenity:place_of_worship", museu:"tourism:museum" };
+function distKm(a, b) { const r = Math.PI / 180, x = (b.lng - a.lng) * r * Math.cos((a.lat + b.lat) * r / 2), y = (b.lat - a.lat) * r; return 6371 * Math.hypot(x, y); }
+async function buscarLugares(texto, limite = 6, explicito = false) {
   const perto = eu ? eu.getLatLng() : (rota ? { lat: rota.origem.lat, lng: rota.origem.lng } : { lat: -22.9847, lng: -43.2003 });
+  const temNumero = /\d/.test(texto);
+  const nominatim = async () => {
+    let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
+    url += `&viewbox=${perto.lng - 0.5},${perto.lat + 0.5},${perto.lng + 0.5},${perto.lat - 0.5}`;
+    const d = await buscarJson(url);
+    return d.map(x => ({ lat: +x.lat, lng: +x.lon, nome: x.name || x.display_name.split(",").slice(0, 2).join(",").trim(),
+      detalhe: (TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + x.display_name.split(",").slice(1, 4).join(",").trim() }));
+  };
+  // Endereço com número digitado e confirmado (Traçar rota): Nominatim primeiro, que entende "Rua X, 611".
+  // (Nominatim não pode ser usado para sugestões a cada letra — regra do serviço.)
+  if (explicito && temNumero) { try { const l = await nominatim(); if (l.length) return l; } catch (e) { console.log(e); } }
+  let erro = null;
   try {
-    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(texto)}&limit=${limite}&lat=${perto.lat}&lon=${perto.lng}&location_bias_scale=0.5`);
-    const d = await r.json();
-    const lista = (d.features || []).filter(f => !f.properties.countrycode || f.properties.countrycode === "BR").map(f => {
-      const { nome, detalhe } = rotuloPhoton(f.properties);
-      return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], nome, detalhe };
-    });
+    const palavras = texto.split(/\s+/), cat = CATEGORIAS[palavras[0].toLowerCase()];
+    const q = cat && palavras.length > 1 ? palavras.slice(1).join(" ") : texto;
+    const pedir = async (comCategoria) => {
+      const d = await buscarJson(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=${limite + 4}&lat=${perto.lat}&lon=${perto.lng}&location_bias_scale=0.1&zoom=13`
+        + (comCategoria ? "&osm_tag=" + encodeURIComponent(cat) : ""));
+      return (d.features || []).filter(f => !f.properties.countrycode || f.properties.countrycode === "BR").map(f => {
+        const { nome, detalhe } = rotuloPhoton(f.properties);
+        return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], nome, detalhe };
+      });
+    };
+    let lista = cat && q !== texto ? await pedir(true) : [];
+    if (!lista.length) lista = await pedir(false);
+    // prefere o que está a menos de 60 km
+    const perto60 = lista.filter(l => distKm(perto, l) < 60);
+    lista = (perto60.length ? perto60 : lista).slice(0, limite);
     if (lista.length) return lista;
-  } catch (e) { console.log("photon", e); }
-  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
-  url += `&viewbox=${perto.lng - 0.4},${perto.lat + 0.4},${perto.lng + 0.4},${perto.lat - 0.4}`;
-  const d = await (await fetch(url, { headers: { "Accept": "application/json" } })).json();
-  return d.map(x => ({ lat: +x.lat, lng: +x.lon, nome: x.name || x.display_name.split(",")[0],
-    detalhe: (TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + x.display_name.split(",").slice(1, 3).join(",").trim() }));
+  } catch (e) { erro = e; console.log("photon", e); }
+  if (explicito) { const l = await nominatim(); if (l.length) return l; }
+  if (erro) throw erro;
+  return [];
 }
 async function geocodificar(texto, campo) {
   // se o usuário escolheu uma sugestão e não mudou o texto, usa a escolha
   if (campo && campo.escolha && campo.escolha.texto === texto) return campo.escolha;
-  const l = await buscarLugares(texto, 1);
-  if (!l.length) throw new Error(`Não encontrado: "${texto}"`);
+  const l = await buscarLugares(texto, 1, true);
+  if (!l.length) throw new Error(`Não encontrado: "${texto}". Tente incluir rua e bairro, ou escolha uma sugestão da lista.`);
   return l[0];
 }
 function ligarSugestoes(input, caixa) {
@@ -201,8 +236,9 @@ function ligarSugestoes(input, caixa) {
     espera = setTimeout(async () => {
       const meu = ++pedido;
       let l = [];
-      try { l = await buscarLugares(t); } catch {}
-      if (meu !== pedido || input.value.trim() !== t) return;
+      try { l = await buscarLugares(t); }
+      catch (e) { caixa.innerHTML = '<div><small></small></div>'; caixa.querySelector("small").textContent = "⚠ " + e.message; caixa.style.display = "block"; return; }
+      if (meu !== pedido || input.value.trim() !== t || document.activeElement !== input) return;
       if (!l.length) { caixa.innerHTML = '<div><small>Nada encontrado. Tente incluir o bairro.</small></div>'; caixa.style.display = "block"; return; }
       caixa.innerHTML = "";
       l.forEach(lugar => {
@@ -220,9 +256,12 @@ function ligarSugestoes(input, caixa) {
     }, 450);
   });
   input.addEventListener("blur", () => setTimeout(fechar, 200));
+  input.addEventListener("focus", () => document.querySelectorAll(".sugestoes").forEach(c => { if (c !== caixa) c.style.display = "none"; }));
 }
 async function tracarRota() {
   const de = $("rotaDe").value.trim(), para = $("rotaPara").value.trim(), modo = $("rotaModo").value;
+  document.activeElement?.blur();   // fecha o teclado para a mensagem aparecer
+  $("rotaInfo").scrollIntoView({ block: "center", behavior: "smooth" });
   if (!para) { $("rotaInfo").textContent = "Digite o destino."; return; }
   $("rotaInfo").textContent = "Procurando endereços…";
   try {
@@ -234,8 +273,7 @@ async function tracarRota() {
       () => falha(new Error("Sem localização: ligue o GPS ou digite a origem.")), { enableHighAccuracy: true, timeout: 10000 }));
     const destino = await geocodificar(para, $("rotaPara"));
     $("rotaInfo").textContent = "Calculando o trajeto…";
-    const r = await fetch(`https://routing.openstreetmap.de/${PERFIL[modo]}/route/v1/driving/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson`);
-    const d = await r.json();
+    const d = await buscarJson(`https://routing.openstreetmap.de/${PERFIL[modo]}/route/v1/driving/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson`, 15000);
     if (d.code !== "Ok" || !d.routes || !d.routes.length) throw new Error("Não foi possível calcular a rota.");
     const rt = d.routes[0];
     rota = { modo, origem, destino, distancia: rt.distance, duracao: rt.duration,
