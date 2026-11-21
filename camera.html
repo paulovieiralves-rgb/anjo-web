@@ -26,7 +26,7 @@
   #cont { margin:10px 0 4px; }
   .rota { background:var(--painel); border-radius:12px; padding:10px; margin-top:10px; }
   .campo { position:relative; }
-  .sugestoes { position:absolute; left:0; right:0; top:100%; z-index:1000; background:#0f172a; border:1px solid #334155;
+  .sugestoes { -webkit-overflow-scrolling:touch; overscroll-behavior:contain; position:absolute; left:0; right:0; top:100%; z-index:1000; background:#0f172a; border:1px solid #334155;
     border-radius:8px; margin-top:2px; max-height:260px; overflow:auto; display:none; box-shadow:0 8px 20px rgba(0,0,0,.5); }
   .sugestoes div { padding:9px 10px; border-bottom:1px solid #1e293b; cursor:pointer; }
   .sugestoes div:active, .sugestoes div:hover { background:#1e293b; }
@@ -245,7 +245,9 @@ function ligarSugestoes(input, caixa) {
         const el = document.createElement("div");
         el.innerHTML = "<b></b><small></small>";
         el.querySelector("b").textContent = lugar.nome; el.querySelector("small").textContent = lugar.detalhe;
-        el.onmousedown = el.ontouchstart = ev => {
+        // rolar a lista com o dedo não escolhe nada; só o toque (click) escolhe
+        el.onmousedown = ev => ev.preventDefault();   // mantém o campo em foco até o toque terminar
+        el.onclick = ev => {
           ev.preventDefault();
           input.value = lugar.nome; input.escolha = { ...lugar, texto: lugar.nome }; fechar();
           if (mapa) mapa.setView([lugar.lat, lugar.lng], 17);
