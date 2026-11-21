@@ -83,7 +83,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C5";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C6";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -198,11 +198,17 @@ function pontoReferencia() {
 // Nominatim: só em ação explícita do usuário (regra do serviço: nada de busca a cada letra)
 async function buscarNominatim(texto, limite, perto) {
   perto = perto || pontoReferencia();
-  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
+  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=${limite}&countrycodes=br&accept-language=pt-BR&q=` + encodeURIComponent(texto);
   url += `&viewbox=${perto.lng - 0.5},${perto.lat + 0.5},${perto.lng + 0.5},${perto.lat - 0.5}`;
   const d = await buscarJson(url);
-  return d.map(x => ({ lat: +x.lat, lng: +x.lon, nome: x.name || x.display_name.split(",").slice(0, 2).join(",").trim(),
-    detalhe: (TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + x.display_name.split(",").slice(1, 4).join(",").trim() }));
+  return d.map(x => {
+    const a = x.address || {}, num = a.house_number;
+    const rua = [a.road, num].filter(Boolean).join(", ");
+    const lugar = x.name && x.name !== a.road ? x.name : null;
+    return { lat: +x.lat, lng: +x.lon, exato: !!num,
+      nome: lugar || rua || x.display_name.split(",").slice(0, 2).join(",").trim(),
+      detalhe: (lugar && TIPOS[x.type] ? TIPOS[x.type] + " · " : "") + [lugar ? rua : null, a.suburb || a.neighbourhood, a.city || a.town].filter(Boolean).join(" · ") };
+  });
 }
 async function buscarLugares(texto, limite = 6, explicito = false) {
   const perto = eu ? eu.getLatLng() : (rota ? { lat: rota.origem.lat, lng: rota.origem.lng } : { lat: -22.9847, lng: -43.2003 });
@@ -220,7 +226,8 @@ async function buscarLugares(texto, limite = 6, explicito = false) {
         + (comCategoria ? "&osm_tag=" + encodeURIComponent(cat) : ""));
       return (d.features || []).filter(f => !f.properties.countrycode || f.properties.countrycode === "BR").map(f => {
         const { nome, detalhe } = rotuloPhoton(f.properties);
-        return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], nome, detalhe };
+        return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], nome, detalhe, exato: !!f.properties.housenumber,
+                 rua: f.properties.osm_key === "highway" };
       });
     };
     let lista = cat && q !== texto ? await pedir(true) : [];
@@ -285,7 +292,7 @@ function ligarSugestoes(input, caixa) {
     let l = [];
     try { l = await buscarLugares(t, 10); } catch (e) { if (meu === pedido) aviso("⚠ " + e.message); return; }
     if (meu !== pedido || input.value.trim() !== t) return;
-    if (!l.length) { aviso("Nada encontrado. Tente incluir o bairro (ex.: Pobre Juan Ipanema)."); return; }
+    if (!l.length && !/\d/.test(t)) { aviso("Nada encontrado. Tente incluir o bairro (ex.: Pobre Juan Ipanema)."); return; }
     const perto = pontoReferencia();
     caixa.innerHTML = '<div class="msg aviso" style="display:none"><small></small></div><div class="lista"></div>'
       + '<div class="acoes"><button class="usar verde" disabled>✔ Usar este lugar</button><button class="fechar">✕ Fechar</button></div>'
@@ -293,7 +300,8 @@ function ligarSugestoes(input, caixa) {
     const lista = caixa.querySelector(".lista"), usar = caixa.querySelector(".usar");
     const vistos = [];
     const avisar = () => {
-      const longe = vistos.length && vistos.every(v => distKm(perto, v) > 60);
+      const reais = vistos.filter(v => !v.digitado);
+      const longe = reais.length && reais.every(v => distKm(perto, v) > 60);
       const a = caixa.querySelector(".aviso");
       a.style.display = longe ? "block" : "none";
       a.querySelector("small").textContent = "⚠ Não achei este lugar perto de você — estes ficam em outras cidades. Toque em “🔎 Buscar mais”, digite o endereço ou use “📍 Marcar no mapa”.";
@@ -301,15 +309,31 @@ function ligarSugestoes(input, caixa) {
     const acrescentar = (itens) => {
       let novos = 0;
       itens.forEach(lugar => {
-        if (vistos.some(v => distKm(v, lugar) < 0.05 && v.nome === lugar.nome)) return;   // repetido
+        if (!lugar.digitado && vistos.some(v => !v.digitado && distKm(v, lugar) < 0.05 && v.nome === lugar.nome)) return;   // repetido
         vistos.push(lugar); novos++;
         const el = document.createElement("div"); el.className = "item";
         el.innerHTML = "<b></b><small></small>";
         el.querySelector("b").textContent = lugar.nome;
         const km = distKm(perto, lugar);
+        if (!lugar.digitado && lugar.rua && !lugar.exato) lugar.detalhe += " · rua inteira, sem número";
         el.querySelector("small").textContent = lugar.detalhe + ` · a ${km < 1 ? Math.round(km * 1000) + " m" : km.toFixed(1).replace(".", ",") + " km"}`;
-        el.onclick = () => {              // só marca e mostra no mapa
+        if (lugar.digitado) el.querySelector("small").textContent = lugar.detalhe;
+        el.onclick = async () => {        // só marca e mostra no mapa
           lista.querySelectorAll(".item").forEach(i => i.classList.remove("sel")); el.classList.add("sel");
+          if (lugar.digitado && !lugar.localizado) {
+            el.querySelector("small").textContent = "Localizando o número…"; usar.disabled = true;
+            try {
+              const r = (await buscarNominatim(t, 3, perto)).sort((a, b) => b.exato - a.exato)[0];
+              if (!r) throw new Error("não encontrado");
+              Object.assign(lugar, { lat: r.lat, lng: r.lng, localizado: true });
+              if (r.exato) { lugar.nome = r.nome; el.querySelector("b").textContent = r.nome; }
+              el.querySelector("small").textContent = r.exato ? "✔ Número localizado · " + r.detalhe
+                : "⚠ Número não cadastrado no mapa: posição aproximada na rua. Confira o ponto laranja ou use 📍 Marcar no mapa.";
+            } catch (e) {
+              el.querySelector("small").textContent = "⚠ Não localizei este endereço. Confira a grafia ou use 📍 Marcar no mapa.";
+              return;
+            }
+          }
           marcado = lugar; usar.disabled = false; usar.textContent = "✔ Usar: " + lugar.nome;
           mostrarPrevia(lugar);
         };
@@ -318,6 +342,14 @@ function ligarSugestoes(input, caixa) {
       avisar();
       return novos;
     };
+    const numero = (t.match(/\b(\d{1,5})\b/) || [])[1];
+    if (numero) {
+      // 1º item: o endereço exatamente como digitado; ao marcar, localiza o número
+      const digitado = { nome: t.replace(/\s+/g, " "), detalhe: "Endereço digitado · toque para localizar o número", digitado: true,
+                         lat: perto.lat, lng: perto.lng };
+      l = l.filter(x => !(x.rua && !x.exato));            // ruas sem número ficariam no meio da rua
+      l.unshift(digitado);
+    }
     acrescentar(l);
     caixa.querySelector(".mais").onclick = async (ev) => {
       const b = ev.currentTarget; b.disabled = true; b.textContent = "Buscando…";
