@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Anjo da Guarda · Acompanhamento</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>window.L || document.write('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"><script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>');</script>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"></script>
+<style>
+  :root { --fundo:#0f172a; --painel:#1e293b; --texto:#e2e8f0; --sub:#94a3b8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--fundo); color:var(--texto); font:15px/1.4 system-ui, -apple-system, Segoe UI, Arial, sans-serif; }
+  header { padding:10px 14px; background:#111827; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  h1 { font-size:17px; margin:0 10px 0 0; }
+  .pill { padding:3px 10px; border-radius:999px; background:var(--painel); font-size:13px; }
+  .sos { background:#b91c1c; color:#fff; font-weight:bold; animation:piscar 1s infinite; }
+  @keyframes piscar { 50% { opacity:.6; } }
+  main { display:grid; grid-template-columns: 1fr 1fr; gap:10px; padding:10px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .box { background:var(--painel); border-radius:10px; padding:10px; }
+  video { width:100%; max-height:60vh; background:#000; border-radius:8px; }
+  #mapa { height:60vh; min-height:320px; border-radius:8px; }
+  button, a.botao { background:#334155; color:var(--texto); border:0; border-radius:6px; padding:8px 12px; font-size:14px; cursor:pointer; text-decoration:none; display:inline-block; margin:4px 4px 0 0; }
+  .sub { color:var(--sub); font-size:13px; }
+  #erro { display:none; margin:20vh auto; max-width:520px; text-align:center; }
+  ul { margin:6px 0; padding-left:18px; }
+</style>
+</head>
+<body>
+<div id="erro" class="box"></div>
+<div id="app">
+<header>
+  <h1>🚓 Anjo da Guarda · Acompanhamento ao vivo</h1>
+  <span class="pill" id="nome">…</span>
+  <span class="pill" id="estado">Conectando…</span>
+  <span class="pill" id="sos" style="display:none"></span>
+  <span class="pill" id="validade"></span>
+</header>
+<main>
+  <div class="box">
+    <video id="video" autoplay playsinline muted></video>
+    <div><button id="btSom">🔈 Ouvir áudio</button><span class="sub" id="infoVideo">Aguardando o vídeo do celular…</span></div>
+  </div>
+  <div class="box">
+    <div id="mapa"></div>
+    <div id="posTxt" class="sub" style="margin-top:6px">Aguardando a posição…</div>
+    <a class="botao" id="btMaps" target="_blank" rel="noopener" style="display:none">🗺 Abrir no Google Maps</a>
+    <button id="btSeguir">📍 Seguir a posição</button>
+  </div>
+  <div class="box" style="grid-column: 1 / -1">
+    <b>Alertas</b><ul id="alertas"><li class="sub">Nenhum alerta desde que o link foi aberto.</li></ul>
+    <p class="sub">Link de acesso temporário gerado pela central do Anjo da Guarda, só para acompanhar esta ocorrência.
+    Mostra o vídeo e o GPS do celular do assinante. Não compartilhe com terceiros.</p>
+  </div>
+</main>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const CENTRAL = "anjo-central";
+function lerLink() {
+  const m = location.hash.match(/t=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  try {
+    const b = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(decodeURIComponent(escape(atob(b + "===".slice((b.length + 3) % 4)))));
+  } catch { return null; }
+}
+const d = lerLink();
+function erro(txt) { $("app").style.display = "none"; $("erro").style.display = "block"; $("erro").innerHTML = txt; }
+if (!d || !d.token) erro("<h2>Link inválido</h2><p>Peça à central do Anjo da Guarda um link novo.</p>");
+
+const hhmmss = ms => new Date(ms).toLocaleTimeString("pt-BR");
+let mapa = null, trilha = null, marca = null, seguir = true, ultimo = null;
+function iniciarMapa() {
+  mapa = L.map("mapa").setView([-22.97, -43.2], 14);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Tiles © Esri" }).addTo(mapa);
+  trilha = L.polyline([], { color: "#ef4444", weight: 4 }).addTo(mapa);
+  mapa.on("dragstart", () => seguir = false);
+}
+function posicao(p, centralizar) {
+  if (p.lat == null) return;
+  ultimo = p;
+  const ll = [p.lat, p.lng];
+  trilha.addLatLng(ll);
+  if (!marca) marca = L.circleMarker(ll, { radius: 10, color: "#fff", weight: 3, fillColor: "#ef4444", fillOpacity: 1 }).addTo(mapa);
+  else marca.setLatLng(ll);
+  if (seguir || centralizar) mapa.setView(ll, Math.max(mapa.getZoom(), 17));
+  $("btMaps").style.display = "inline-block";
+  $("btMaps").href = `https://www.google.com/maps?q=${p.lat},${p.lng}`;
+  textoPos();
+}
+function textoPos() {
+  if (!ultimo) return;
+  const idade = ultimo.t ? Math.round((Date.now() - ultimo.t) / 1000) : null;
+  $("posTxt").textContent = `Última posição: ${ultimo.lat.toFixed(6)}, ${ultimo.lng.toFixed(6)}`
+    + (ultimo.acc ? ` (±${Math.round(ultimo.acc)} m)` : "") + (ultimo.v ? ` · ${(ultimo.v * 3.6).toFixed(0)} km/h` : "")
+    + (idade != null ? ` · há ${idade < 60 ? idade + " s" : Math.round(idade / 60) + " min"}` : "");
+}
+setInterval(textoPos, 1000);
+function mostrarSos(s) {
+  $("sos").style.display = s ? "inline-block" : "none";
+  if (s) { $("sos").className = "pill sos"; $("sos").textContent = "🆘 SOS — roubo ou assalto · desde " + new Date(s.inicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); }
+}
+$("btSeguir").onclick = () => { seguir = true; if (ultimo) mapa.setView([ultimo.lat, ultimo.lng], 17); };
+
+let audio = null;
+$("btSom").onclick = () => {
+  if (!audio) return;
+  audio.muted = !audio.muted; audio.play?.().catch(() => {});
+  $("btSom").textContent = audio.muted ? "🔈 Ouvir áudio" : "🔇 Silenciar áudio";
+};
+
+async function conectar() {
+  const R = LivekitClient;
+  const room = new R.Room({ adaptiveStream: false });
+  const assinar = (pub, part) => { if (part.identity === d.cam) pub.setSubscribed(true); };
+  const oi = () => room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ tipo: "oi" })),
+    { reliable: true, topic: "anjo", destinationIdentities: [CENTRAL] }).catch(() => {});
+  room.on(R.RoomEvent.TrackPublished, assinar)
+      .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) oi(); })
+      .on(R.RoomEvent.TrackSubscribed, (track, pub, part) => {
+        if (part.identity !== d.cam) return;
+        if (track.kind === "video") { track.attach($("video")); $("infoVideo").textContent = " 📹 vídeo ao vivo"; $("estado").textContent = "🟢 Ao vivo"; }
+        if (track.kind === "audio") { audio = track.attach(); audio.muted = true; document.body.appendChild(audio); }
+      })
+      .on(R.RoomEvent.TrackUnsubscribed, (track, pub, part) => {
+        if (part.identity === d.cam && track.kind === "video") { $("infoVideo").textContent = " sem imagem no momento (o celular parou de transmitir)"; $("estado").textContent = "⚪ Sem imagem"; }
+      })
+      .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
+        if (topico !== "anjo") return;
+        let m; try { m = JSON.parse(new TextDecoder().decode(payload)); } catch { return; }
+        if (m.cam !== d.cam) return;
+        if (m.tipo === "trilha") {
+          trilhaOk = true;
+          trilha.setLatLngs(m.pontos || []);
+          if (m.ultimo) posicao(m.ultimo, true); else if ((m.pontos || []).length) mapa.fitBounds(trilha.getBounds());
+          ultimoSos = m.sos || null; mostrarSos(ultimoSos);
+          if (m.expira) $("validade").textContent = "link válido até " + new Date(m.expira * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+        } else if (m.tipo === "posicao") { posicao(m); mostrarSos(m.sos ? (ultimoSos = ultimoSos || { inicio: Date.now() }) : null); }
+        else if (m.tipo === "alerta") {
+          const li = document.createElement("li");
+          li.textContent = `${hhmmss(m.t || Date.now())} · ${(m.alertas || []).join(", ")}${m.virtual ? " · " + m.virtual : ""}`;
+          if (m.grave) li.style.color = "#f87171";
+          const ul = $("alertas"); if (ul.querySelector(".sub")) ul.innerHTML = ""; ul.prepend(li);
+        }
+      })
+      .on(R.RoomEvent.Disconnected, motivo => {
+        if (motivo === R.DisconnectReason.PARTICIPANT_REMOVED) { erro("<h2>Link encerrado</h2><p>A central encerrou este acompanhamento.</p>"); return; }
+        $("estado").textContent = "Reconectando…"; setTimeout(conectar, 4000);
+      });
+  try {
+    await room.connect(d.url, d.token, { autoSubscribe: false });
+    $("estado").textContent = "Conectado";
+    for (const part of room.remoteParticipants.values()) for (const pub of part.trackPublications.values()) assinar(pub, part);
+    oi();
+    // o canal de dados pode ainda não estar pronto: repete o pedido da trilha até ela chegar
+    const rep = setInterval(() => { if (trilhaOk || room.state !== "connected") clearInterval(rep); else oi(); }, 2500);
+  } catch (e) {
+    if (/revoked|expired|invalid token/i.test(e.message || "")) erro("<h2>Link encerrado ou vencido</h2><p>Peça à central do Anjo da Guarda um link novo.</p>");
+    else { $("estado").textContent = "Falha ao conectar, tentando de novo…"; setTimeout(conectar, 5000); }
+  }
+}
+let ultimoSos = null, trilhaOk = false;
+if (d && d.token) { $("nome").textContent = "Assinante: " + d.cam; iniciarMapa(); conectar(); }
+</script>
+</body>
+</html>

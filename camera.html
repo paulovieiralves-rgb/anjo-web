@@ -55,6 +55,7 @@
   .verde { background:#15803d; } .vermelho { background:#b91c1c; }
   .nota { color:#64748b; font-size:12px; margin-top:12px; }
   #semPar { margin-top:30vh; text-align:center; }
+  body.discreto #tela, body.discreto #cont, body.discreto #mapa, body.discreto .rota, body.discreto #alerta { display:none !important; }
 </style>
 </head>
 <body>
@@ -84,13 +85,25 @@
   <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
   <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
   <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
+  <button id="btSos" class="vermelho" style="margin-top:10px">🆘 SOS — segure 2 segundos</button>
+  <div class="linha"><button id="btSacudir">📳 SOS ao sacudir: ligado</button><button id="btDiscreto">🙈 Modo discreto</button></div>
+  <details class="nota" style="margin-top:6px"><summary>🆘 Como pedir socorro sem abrir a tela (iPhone)</summary>
+    <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
+    o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
+    <p><b>Formas de acionar:</b> segurar o botão 🆘 por 2 s; sacudir o celular com força (5 vezes em 3 s, com esta página aberta);
+    ou um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
+    <p><b>Criar o atalho:</b> app Atalhos → + → Adicionar ação → “Abrir URL” → cole o link → nomeie “Anjo SOS”.
+    Depois ligue-o a um gesto: Ajustes → Acessibilidade → Toque → <b>Toque Traseiro</b> → Toque triplo → “Anjo SOS”
+    (ou no <b>Botão de Ação</b> do iPhone 15 Pro/16, ou diga “E aí Siri, Anjo SOS”).</p>
+    <p>Na versão web, a transmissão só continua com esta página na tela. O app nativo vai funcionar em segundo plano.</p>
+  </details>
   <p class="nota" style="color:#22c55e">Versão da página: <b id="versaoPag"></b> · atualiza sozinha</p>
   <p class="nota">Versão web para iPhone enquanto o app nativo não é instalado. Mantenha esta tela aberta: o iPhone
     pausa a câmera de páginas web quando outro app é aberto ou a tela bloqueia.</p>
 </div>
 
 <script>
-const VERSAO_PAGINA = "C19";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C21";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -112,6 +125,7 @@ function lerFragmento() {
     return d && d.anjo === 1 && d.url && d.token ? { url:d.url, token:d.token, nome:d.nome || "camera" } : null;
   } catch { return null; }
 }
+const SOS_NA_URL = /[?&#]sos(=1)?\b/.test(location.search + location.hash);   // atalho do iPhone: camera.html?sos=1
 let par = lerFragmento();
 if (par) { ls.set("anjo.pareamento", JSON.stringify(par)); history.replaceState(null, "", location.pathname); }
 else { try { par = JSON.parse(ls.get("anjo.pareamento") || "null"); } catch { par = null; } }
@@ -122,7 +136,7 @@ function validade(p) {
 }
 if (!par) $("semPar").style.display = "block";
 else {
-  $("app").style.display = "block"; $("nome").textContent = par.nome;
+  $("app").style.display = "block"; $("nome").textContent = par.nome; $("linkSos").textContent = location.origin + location.pathname + "?sos=1";
   const v = validade(par); if (v) $("validade").textContent = "pareado até " + v.toLocaleDateString("pt-BR");
 }
 
@@ -580,8 +594,8 @@ async function conectar() {
   room = new R.Room({ adaptiveStream:false, dynacast:false,
     videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution },
     publishDefaults: { simulcast:false, videoEncoding: { maxBitrate: 900000, maxFramerate: 15 } } });
-  room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar:gravar }))
-      .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar:gravar }); enviarRota(); } })
+  room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar: gravar || sosAtivo }))
+      .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota(); } })
       .on(R.RoomEvent.Disconnected, motivo => {
         $("video").srcObject = null;
         if (motivo === R.DisconnectReason.PARTICIPANT_REMOVED) { desconectadoPelaCentral({ mensagem: "Desconectado pela central" }); return; }
@@ -590,10 +604,12 @@ async function conectar() {
       .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
         if (topico !== "anjo") return;
         let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
-        if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== gravar) enviar({ tipo:"gravar", ligar:gravar }); resumo(m.contagem || {}); }
+        if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== (gravar || sosAtivo)) enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); resumo(m.contagem || {}); }
         else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
         else if (m.tipo === "alerta") mostrarAlerta(m);
         else if (m.tipo === "desconectar") desconectadoPelaCentral(m);
+        else if (m.tipo === "sos_ok") { sosOkT = Date.now(); marcaSos(); }
+        else if (m.tipo === "sos_fim") fimSos();
       });
   try {
     await room.connect(par.url, par.token);
@@ -601,7 +617,8 @@ async function conectar() {
     await room.localParticipant.setMicrophoneEnabled(true);
     const pub = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
-    enviar({ tipo:"gravar", ligar:gravar }); enviarRota();
+    enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
+    if (sosAtivo) enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" });
   } catch (e) {
     console.log(e);
     if (/revoked|expired/i.test(e.message || "")) { tokenInvalido(); return; }
@@ -610,11 +627,12 @@ async function conectar() {
   }
 }
 
-async function iniciar() {
+async function iniciar(silencioso = false) {
   await sairEspera();
   avisoCentral = "";
   ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
-  falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
+  pedirSensores();
+  if (!silencioso && !sosAtivo) falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
   await conectar();
   hb = setInterval(() => enviar({ tipo:"hb" }, false), 1000);
@@ -634,6 +652,57 @@ async function parar() {
 // a tela volta a ficar ligada quando o usuário retorna à página
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && ativo) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+});
+
+/* ---------- SOS: roubo ou assalto ----------
+   Discreto: o celular não fala e a tela não muda (só um ponto vermelho pequeno no título).
+   Liga a transmissão (câmera frontal, microfone e GPS) e avisa a central a cada 5 s. Só a central encerra. */
+let sosAtivo = ls.get("anjo.sos") === "1", sosRep = null, sosOkT = 0;
+function marcaSos() { $("nome").textContent = par ? par.nome + (sosAtivo ? " ·" : "") : "Câmera"; $("nome").style.color = sosAtivo ? (Date.now() - sosOkT < 12000 ? "#ef4444" : "#f97316") : ""; }
+async function dispararSos(motivo) {
+  const ja = sosAtivo;
+  sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
+  discreto(true);
+  if (!ja) console.log("SOS:", motivo);
+  if (!ativo) { if (!ja || !room) frontal = true; await iniciar(true); }
+  const avisar = () => { enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" }); marcaSos(); };
+  clearInterval(sosRep); sosRep = setInterval(avisar, 5000); avisar();
+}
+function fimSos() {
+  sosAtivo = false; ls.del("anjo.sos"); ls.del("anjo.sosMotivo"); clearInterval(sosRep); sosRep = null; marcaSos();
+}
+// botão: segurar 2 s
+(() => {
+  let t = null;
+  const soltar = () => { clearTimeout(t); t = null; $("btSos").textContent = "🆘 SOS — segure 2 segundos"; };
+  const apertar = ev => { ev.preventDefault(); pedirSensores(); $("btSos").textContent = "🆘 Continue segurando…";
+    t = setTimeout(() => { soltar(); dispararSos("botão"); $("btSos").textContent = "🆘 SOS enviado à central"; setTimeout(soltar, 4000); }, 2000); };
+  $("btSos").addEventListener("touchstart", apertar, { passive:false }); $("btSos").addEventListener("mousedown", apertar);
+  ["touchend", "touchcancel", "mouseup", "mouseleave"].forEach(e => $("btSos").addEventListener(e, () => { if (t) soltar(); }));
+})();
+// Modo discreto: continua transmitindo, mas sem mostrar câmera, mapa e rota (liga sozinho no SOS)
+function discreto(lig) { document.body.classList.toggle("discreto", lig); ls.set("anjo.discreto", lig ? "1" : "0");
+  $("btDiscreto").textContent = lig ? "👁 Mostrar câmera e mapa" : "🙈 Modo discreto"; if (!lig && mapa) setTimeout(() => mapa.invalidateSize(), 100); }
+$("btDiscreto").onclick = () => discreto(!document.body.classList.contains("discreto"));
+discreto(ls.get("anjo.discreto") === "1");
+// sacudir: 5 picos fortes (> 2,5 g) em 3 s; só com a página aberta
+let sacudir = ls.get("anjo.sacudir") !== "0", picos = [];
+function botaoSacudir() { $("btSacudir").textContent = "📳 SOS ao sacudir: " + (sacudir ? "ligado" : "desligado"); }
+botaoSacudir();
+$("btSacudir").onclick = () => { sacudir = !sacudir; ls.set("anjo.sacudir", sacudir ? "1" : "0"); botaoSacudir(); pedirSensores(); };
+let sensoresPedidos = false;
+function pedirSensores() {   // iPhone: a permissão do sensor de movimento só pode ser pedida num toque
+  if (sensoresPedidos) return; sensoresPedidos = true;
+  try { if (window.DeviceMotionEvent && DeviceMotionEvent.requestPermission) DeviceMotionEvent.requestPermission().catch(() => {}); } catch {}
+}
+window.addEventListener("devicemotion", ev => {
+  if (!sacudir || sosAtivo || !par) return;
+  const a = ev.accelerationIncludingGravity; if (!a || a.x == null) return;
+  const g = Math.hypot(a.x, a.y, a.z), agora = Date.now();
+  if (g > 25 && (!picos.length || agora - picos[picos.length - 1] > 150)) {
+    picos = picos.filter(t => agora - t < 3000); picos.push(agora);
+    if (picos.length >= 5) { picos = []; dispararSos("sacudir"); }
+  }
 });
 
 // A central pode desconectar (ou bloquear) este celular: para tudo e fica EM ESPERA,
@@ -684,6 +753,11 @@ async function sairEspera() {
   emEspera = false; ls.del("anjo.espera"); clearInterval(esperaHb);
   const r = espera; espera = null;
   if (r) await r.disconnect().catch(() => {});
+}
+// SOS: atalho do iPhone (camera.html?sos=1) ou SOS que já estava em andamento quando a página fechou
+if (par && (SOS_NA_URL || sosAtivo)) {
+  if (SOS_NA_URL) history.replaceState(null, "", location.pathname);
+  setTimeout(() => dispararSos(SOS_NA_URL ? "atalho" : ls.get("anjo.sosMotivo") || "retomado"), 300);
 }
 // Página aberta e parada (ao abrir, depois de Parar ou de ser desconectada): fica em espera,
 // assim a central pode pedir a volta da transmissão com 🔄 Reconectar, sem novo QR.
@@ -762,8 +836,10 @@ setTimeout(conferirVersao, 5000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") conferirVersao(); });
 
 /* ---------- botões ---------- */
-$("btIniciar").onclick = async () => { if (ativo) { await parar(); if (versaoNova) recarregar(); else setTimeout(entrarEspera, 1500); } else iniciar(); };
-$("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar:gravar }); };
+$("btIniciar").onclick = async () => {
+  if (ativo && sosAtivo) { $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde"; return; }   // SOS: não para
+  if (ativo) { await parar(); if (versaoNova) recarregar(); else setTimeout(entrarEspera, 1500); } else iniciar(); };
+$("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); };
 $("btCam").onclick = async () => {
   frontal = !frontal;
   const pub = room?.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
