@@ -90,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C14";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C15";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -653,9 +653,9 @@ async function entrarEspera() {
           let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
           if (m.tipo === "reconectar") { falar("A central reconectou. Iniciando transmissão.", 1, "reconectar", 0); iniciar(); }
         })
-        .on(R.RoomEvent.Disconnected, () => { clearInterval(esperaHb); espera = null; if (emEspera) setTimeout(entrarEspera, 20000); });
+        .on(R.RoomEvent.Disconnected, () => { clearInterval(esperaHb); espera = null; if (emEspera) setTimeout(entrarEspera, 5000); });
   try { await espera.connect(par.url, par.token); avisar(); clearInterval(esperaHb); esperaHb = setInterval(avisar, 10000); }
-  catch (e) { console.log("espera", e); espera = null; setTimeout(entrarEspera, 20000); }
+  catch (e) { console.log("espera", e); espera = null; setTimeout(entrarEspera, 5000); }
 }
 async function sairEspera() {
   emEspera = false; ls.del("anjo.espera"); clearInterval(esperaHb);
