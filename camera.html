@@ -90,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C18";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C19";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -641,17 +641,22 @@ document.addEventListener("visibilitychange", async () => {
 let avisoCentral = "", espera = null, emEspera = false, esperaHb = null;
 async function desconectadoPelaCentral(m) {
   if (!ativo && avisoCentral) return;
-  avisoCentral = (m.bloqueado ? "⛔ Bloqueado pela central — aguardando liberação" : "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)");
   falar(m.mensagem || "Desconectado pela central", 1, "desconectar", 0);
+  if (m.bloqueado) {   // bloqueio cancela o pareamento: só um QR novo da central libera
+    emEspera = false; ls.del("anjo.espera");
+    await parar();
+    avisoCentral = "⛔ Bloqueado pela central. O pareamento foi cancelado: para voltar, leia um QR novo da central.";
+    return;
+  }
+  avisoCentral = "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)";
   await parar();
-  ls.set("anjo.espera", m.bloqueado ? "b" : "1");
-  setTimeout(entrarEspera, 4000);   // depois que o servidor terminar de tirar o celular da sala
+  ls.set("anjo.espera", "1");
+  setTimeout(entrarEspera, 1500);
 }
 async function entrarEspera() {
   if (ativo || !par) return;
-  const marca = ls.get("anjo.espera");
-  if (!avisoCentral && marca) avisoCentral = marca === "b" ? "⛔ Bloqueado pela central — aguardando liberação"
-    : "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)";
+  if (avisoCentral.startsWith("⛔") || avisoCentral.startsWith("⚠")) return;   // bloqueado ou token recusado: só QR novo
+  if (!avisoCentral && ls.get("anjo.espera")) avisoCentral = "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)";
   emEspera = true;
   if (espera) return;
   const R = LivekitClient;
