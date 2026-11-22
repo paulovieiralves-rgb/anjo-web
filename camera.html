@@ -90,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C17";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C18";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -603,7 +603,9 @@ async function conectar() {
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
     enviar({ tipo:"gravar", ligar:gravar }); enviarRota();
   } catch (e) {
-    console.log(e); $("link").textContent = "Falha ao conectar: " + (e.message || e);
+    console.log(e);
+    if (/revoked|expired/i.test(e.message || "")) { tokenInvalido(); return; }
+    $("link").textContent = "Falha ao conectar: " + (e.message || e);
     if (ativo) setTimeout(() => conectar().catch(() => {}), 5000);
   }
 }
@@ -664,7 +666,14 @@ async function entrarEspera() {
         })
         .on(R.RoomEvent.Disconnected, () => { clearInterval(esperaHb); espera = null; if (emEspera) setTimeout(entrarEspera, 5000); });
   try { await espera.connect(par.url, par.token); avisar(); clearInterval(esperaHb); esperaHb = setInterval(avisar, 10000); }
-  catch (e) { console.log("espera", e); espera = null; setTimeout(entrarEspera, 5000); }
+  catch (e) { console.log("espera", e); espera = null; if (/revoked|expired/i.test(e.message || "")) { tokenInvalido(); return; } setTimeout(entrarEspera, 5000); }
+}
+// Token recusado pelo LiveKit (revogado ou vencido): só um QR novo da central resolve
+async function tokenInvalido() {
+  emEspera = false; clearInterval(esperaHb);
+  if (ativo) await parar();
+  avisoCentral = "⚠ Pareamento recusado (token revogado ou vencido). Gere um QR novo na central para este assinante e leia com a câmera.";
+  falar("Pareamento recusado. É preciso ler um QR novo da central.", 1, "token", 0);
 }
 async function sairEspera() {
   emEspera = false; ls.del("anjo.espera"); clearInterval(esperaHb);
