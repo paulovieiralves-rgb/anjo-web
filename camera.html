@@ -90,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C13";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C14";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -601,6 +601,7 @@ async function conectar() {
 }
 
 async function iniciar() {
+  await sairEspera();
   avisoCentral = "";
   ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
   falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
@@ -625,15 +626,44 @@ document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && ativo) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
 });
 
-// A central pode desconectar (ou bloquear) este celular: para tudo e não tenta reconectar
-let avisoCentral = "";
+// A central pode desconectar (ou bloquear) este celular: para tudo e fica EM ESPERA,
+// conectado à sala só por dados (sem câmera, microfone nem GPS), até a central pedir a reconexão.
+let avisoCentral = "", espera = null, emEspera = false, esperaHb = null;
 async function desconectadoPelaCentral(m) {
   if (!ativo && avisoCentral) return;
-  avisoCentral = (m.bloqueado ? "⛔ " : "⏏ ") + (m.mensagem || "Desconectado pela central");
+  avisoCentral = (m.bloqueado ? "⛔ Bloqueado pela central — aguardando liberação" : "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)");
   falar(m.mensagem || "Desconectado pela central", 1, "desconectar", 0);
   await parar();
-  $("link").className = "link mau"; $("link").textContent = avisoCentral + (m.bloqueado ? " — fale com o responsável" : " — toque em Iniciar para voltar");
+  ls.set("anjo.espera", m.bloqueado ? "b" : "1");
+  setTimeout(entrarEspera, 4000);   // depois que o servidor terminar de tirar o celular da sala
 }
+async function entrarEspera() {
+  if (ativo || !par || !ls.get("anjo.espera")) return;
+  if (!avisoCentral) avisoCentral = ls.get("anjo.espera") === "b" ? "⛔ Bloqueado pela central — aguardando liberação"
+    : "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)";
+  emEspera = true;
+  if (espera) return;
+  const R = LivekitClient;
+  espera = new R.Room({ adaptiveStream:false, dynacast:false });
+  const avisar = () => espera?.localParticipant.publishData(cod.encode(JSON.stringify({ tipo:"espera" })),
+    { reliable:true, topic:"anjo", destinationIdentities:[CENTRAL] }).catch(() => {});
+  espera.on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) avisar(); })
+        .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
+          if (topico !== "anjo") return;
+          let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
+          if (m.tipo === "reconectar") { falar("A central reconectou. Iniciando transmissão.", 1, "reconectar", 0); iniciar(); }
+        })
+        .on(R.RoomEvent.Disconnected, () => { clearInterval(esperaHb); espera = null; if (emEspera) setTimeout(entrarEspera, 20000); });
+  try { await espera.connect(par.url, par.token); avisar(); clearInterval(esperaHb); esperaHb = setInterval(avisar, 10000); }
+  catch (e) { console.log("espera", e); espera = null; setTimeout(entrarEspera, 20000); }
+}
+async function sairEspera() {
+  emEspera = false; ls.del("anjo.espera"); clearInterval(esperaHb);
+  const r = espera; espera = null;
+  if (r) await r.disconnect().catch(() => {});
+}
+// página reaberta ou atualizada enquanto estava em espera: volta a aguardar
+if (par && ls.get("anjo.espera")) setTimeout(entrarEspera, 1500);
 function resumo(c) {
   if (velocidade > 8) return;
   const partes = Object.keys(PLURAL).filter(k => c[k]).map(k => `${c[k]} ${c[k] === 1 ? NOMES[k] : PLURAL[k]}`);
