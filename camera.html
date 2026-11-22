@@ -90,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C15";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C16";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -638,8 +638,9 @@ async function desconectadoPelaCentral(m) {
   setTimeout(entrarEspera, 4000);   // depois que o servidor terminar de tirar o celular da sala
 }
 async function entrarEspera() {
-  if (ativo || !par || !ls.get("anjo.espera")) return;
-  if (!avisoCentral) avisoCentral = ls.get("anjo.espera") === "b" ? "⛔ Bloqueado pela central — aguardando liberação"
+  if (ativo || !par) return;
+  const marca = ls.get("anjo.espera");
+  if (!avisoCentral && marca) avisoCentral = marca === "b" ? "⛔ Bloqueado pela central — aguardando liberação"
     : "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)";
   emEspera = true;
   if (espera) return;
@@ -662,8 +663,9 @@ async function sairEspera() {
   const r = espera; espera = null;
   if (r) await r.disconnect().catch(() => {});
 }
-// página reaberta ou atualizada enquanto estava em espera: volta a aguardar
-if (par && ls.get("anjo.espera")) setTimeout(entrarEspera, 1500);
+// Página aberta e parada (ao abrir, depois de Parar ou de ser desconectada): fica em espera,
+// assim a central pode pedir a volta da transmissão com 🔄 Reconectar, sem novo QR.
+if (par) setTimeout(entrarEspera, 1500);
 function resumo(c) {
   if (velocidade > 8) return;
   const partes = Object.keys(PLURAL).filter(k => c[k]).map(k => `${c[k]} ${c[k] === 1 ? NOMES[k] : PLURAL[k]}`);
@@ -681,7 +683,7 @@ function mostrarAlerta(m) {
 /* ---------- indicador e caixas ---------- */
 setInterval(() => {
   const recente = ack && Date.now() - ackT < 3500;
-  const [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", "Transmissão parada"])
+  const [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", emEspera ? "Transmissão parada — a central pode reiniciar com 🔄 Reconectar" : "Transmissão parada"])
     : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.virtual ? " · 📷 " + ack.virtual : ""}${ack.gravando ? " · ⏺ gravando" : ""}`]
     : recente ? ["warn", "● Central conectada, mas sem imagem"]
     : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
@@ -738,7 +740,7 @@ setTimeout(conferirVersao, 5000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") conferirVersao(); });
 
 /* ---------- botões ---------- */
-$("btIniciar").onclick = async () => { if (ativo) { await parar(); if (versaoNova) recarregar(); } else iniciar(); };
+$("btIniciar").onclick = async () => { if (ativo) { await parar(); if (versaoNova) recarregar(); else setTimeout(entrarEspera, 1500); } else iniciar(); };
 $("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar:gravar }); };
 $("btCam").onclick = async () => {
   frontal = !frontal;
