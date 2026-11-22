@@ -90,7 +90,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C12";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C13";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -576,6 +576,7 @@ async function conectar() {
       .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar:gravar }); enviarRota(); } })
       .on(R.RoomEvent.Disconnected, motivo => {
         $("video").srcObject = null;
+        if (motivo === R.DisconnectReason.PARTICIPANT_REMOVED) { desconectadoPelaCentral({ mensagem: "Desconectado pela central" }); return; }
         if (ativo && motivo !== R.DisconnectReason.CLIENT_INITIATED) setTimeout(() => conectar().catch(() => {}), 3000);
       })
       .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
@@ -584,6 +585,7 @@ async function conectar() {
         if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== gravar) enviar({ tipo:"gravar", ligar:gravar }); resumo(m.contagem || {}); }
         else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
         else if (m.tipo === "alerta") mostrarAlerta(m);
+        else if (m.tipo === "desconectar") desconectadoPelaCentral(m);
       });
   try {
     await room.connect(par.url, par.token);
@@ -599,6 +601,7 @@ async function conectar() {
 }
 
 async function iniciar() {
+  avisoCentral = "";
   ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
   falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
@@ -622,6 +625,15 @@ document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && ativo) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
 });
 
+// A central pode desconectar (ou bloquear) este celular: para tudo e não tenta reconectar
+let avisoCentral = "";
+async function desconectadoPelaCentral(m) {
+  if (!ativo && avisoCentral) return;
+  avisoCentral = (m.bloqueado ? "⛔ " : "⏏ ") + (m.mensagem || "Desconectado pela central");
+  falar(m.mensagem || "Desconectado pela central", 1, "desconectar", 0);
+  await parar();
+  $("link").className = "link mau"; $("link").textContent = avisoCentral + (m.bloqueado ? " — fale com o responsável" : " — toque em Iniciar para voltar");
+}
 function resumo(c) {
   if (velocidade > 8) return;
   const partes = Object.keys(PLURAL).filter(k => c[k]).map(k => `${c[k]} ${c[k] === 1 ? NOMES[k] : PLURAL[k]}`);
@@ -639,7 +651,7 @@ function mostrarAlerta(m) {
 /* ---------- indicador e caixas ---------- */
 setInterval(() => {
   const recente = ack && Date.now() - ackT < 3500;
-  const [cls, txt] = !ativo ? ["", "Transmissão parada"]
+  const [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", "Transmissão parada"])
     : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.virtual ? " · 📷 " + ack.virtual : ""}${ack.gravando ? " · ⏺ gravando" : ""}`]
     : recente ? ["warn", "● Central conectada, mas sem imagem"]
     : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
