@@ -104,7 +104,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C24";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C25";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -143,14 +143,14 @@ else {
 
 /* ---------- mapa: percurso e posição atual ---------- */
 let mapa = null, trilha = null, eu = null, seguir = true, percurso = [];
-// Depois de 30 s sem tocar na tela, o mapa volta sozinho para a posição atual (câmera = este celular).
-const VOLTA_MS = 30000;
+// Depois de 5 s sem tocar na tela, o mapa volta sozinho e centraliza na posição atual (câmera = este celular).
+const VOLTA_MS = 5000;
 let ultimoToque = Date.now();
 ["touchstart", "mousedown", "wheel", "keydown"].forEach(ev => document.addEventListener(ev, () => ultimoToque = Date.now(), { passive: true, capture: true }));
 setInterval(() => {
   if (seguir || !mapa || !eu || Date.now() - ultimoToque < VOLTA_MS) return;
   seguir = true; mapa.setView(eu.getLatLng(), Math.max(mapa.getZoom(), 16), { animate: true });
-}, 5000);
+}, 1000);
 function iniciarMapa() {
   if (mapa || !window.L || !par) return;
   mapa = L.map("mapa", { zoomControl: true }).setView([-22.9847, -43.2003], 16);
