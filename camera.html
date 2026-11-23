@@ -55,6 +55,8 @@
   .verde { background:#15803d; } .vermelho { background:#b91c1c; }
   .nota { color:#64748b; font-size:12px; margin-top:12px; }
   #semPar { margin-top:30vh; text-align:center; }
+  /* Safari: tira as "costuras" finas entre os pedaços (tiles) do mapa */
+  .leaflet-tile-container img.leaflet-tile { width:256.6px !important; height:256.6px !important; }
   body.discreto #tela, body.discreto #cont, body.discreto #mapa, body.discreto .rota, body.discreto #alerta { display:none !important; }
 </style>
 </head>
@@ -103,7 +105,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C21";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C22";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
