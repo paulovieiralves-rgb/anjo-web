@@ -100,7 +100,7 @@
   <div class="linha"><button id="btSacudir">📳 SOS ao sacudir: ligado</button><button id="btDiscreto">🙈 Modo discreto</button></div>
   <div id="caixaSenha" style="margin-top:8px;padding:10px;border-radius:10px;background:#1e293b">
     <div><b>🔐 Senha falada para o SOS</b> <span id="senhaStatus" class="sub"></span></div>
-    <div class="sub" style="margin:4px 0">3 ou 4 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular durante a transmissão, aciona o SOS em silêncio. Fica guardada só na central.</div>
+    <div class="sub" style="margin:4px 0">3 ou 4 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular, aciona o SOS em silêncio: transmitindo, quem ouve é a central; com a transmissão parada, o próprio celular ouve (botão 🎙 abaixo).</div>
     <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada" style="width:100%">
     <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer">👁</button></div>
     <button id="btOuvir" style="width:100%;margin-top:6px">🎙 Ouvir a senha com a transmissão parada: desligado</button>
@@ -122,7 +122,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C35";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C36";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -699,7 +699,7 @@ async function conectar() {
         else if (m.tipo === "risco_rotas") respostaRisco = m;
         else if (m.tipo === "senha_ok") {
           if (m.erro) statusSenha("— " + m.erro);
-          else { ls.set("anjo.senhaVoz", m.definida ? "1" : "0"); $("senhaFrase").value = "";
+          else { ls.set("anjo.senhaVoz", m.definida ? "1" : "0"); $("senhaFrase").value = ""; ls.del("anjo.senhaPendente");
                  if (m.definida && fraseEnviada) ls.set("anjo.fraseLocal", fraseEnviada); else if (!m.definida) ls.del("anjo.fraseLocal");
                  fraseEnviada = null; botaoOuvir(); escutaLocal();
                  statusSenha(m.definida ? "✓ cadastrada" + (m.voz && m.voz !== "pronto" ? ` (central: ${m.voz})` : "") : "— não cadastrada"); }
@@ -715,6 +715,9 @@ async function conectar() {
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
     enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
     if (sosAtivo) enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" });
+    if (ls.get("anjo.senhaPendente") === "1" && ls.get("anjo.fraseLocal")) {   // senha salva com a transmissão parada: leva à central
+      fraseEnviada = ls.get("anjo.fraseLocal"); enviar({ tipo:"senha_voz", frase: fraseEnviada });
+    }
   } catch (e) {
     console.log(e);
     if (/revoked|expired/i.test(e.message || "")) { tokenInvalido(); return; }
@@ -852,12 +855,20 @@ botaoOuvir();
 setTimeout(() => { if (!ativo) escutaLocal(); }, 1500);   // página aberta e parada: tenta já ouvir (o iPhone pode pedir um toque)
 // Senha falada: a frase vai só para a central, que reconhece no áudio da transmissão
 function statusSenha(txt) { $("senhaStatus").textContent = txt; }
-statusSenha(ls.get("anjo.senhaVoz") === "1" ? "✓ cadastrada" : "— não cadastrada");
+statusSenha(ls.get("anjo.senhaVoz") === "1" ? "✓ cadastrada" : ls.get("anjo.fraseLocal") ? "✓ guardada neste celular" : "— não cadastrada");
 $("btSenhaVer").onclick = () => { const i = $("senhaFrase"); i.type = i.type === "password" ? "text" : "password"; };
 $("btSenha").onclick = () => {
   const f = $("senhaFrase").value.trim();
-  if (f.split(/\s+/).length < 3) { statusSenha("— use pelo menos 3 palavras"); return; }
-  if (!room || room.state !== "connected") { statusSenha("— conecte à central (▶ Iniciar) para salvar"); return; }
+  const pal = normalizar(f);
+  if (pal.length < 3) { statusSenha("— use pelo menos 3 palavras"); return; }
+  if (pal.length > 6) { statusSenha("— use no máximo 6 palavras"); return; }
+  if (pal.some(w => ["socorro","ajuda","assalto","ladrao","policia"].includes(w))) { statusSenha("— evite socorro, ajuda, assalto, ladrão ou polícia"); return; }
+  ls.set("anjo.fraseLocal", f);                 // guardada já neste celular (escuta com a transmissão parada)
+  if (!room || room.state !== "connected") {
+    ls.set("anjo.senhaPendente", "1"); $("senhaFrase").value = "";
+    statusSenha("✓ guardada neste celular (vai para a central ao iniciar a transmissão)");
+    botaoOuvir(); pararEscutaLocal(); escutaLocal(); return;
+  }
   fraseEnviada = f;
   enviar({ tipo: "senha_voz", frase: f }); statusSenha("enviando…");
 };
