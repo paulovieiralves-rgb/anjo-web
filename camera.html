@@ -105,7 +105,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C22";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C23";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -633,7 +633,6 @@ async function iniciar(silencioso = false) {
   await sairEspera();
   avisoCentral = "";
   ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
-  pedirSensores();
   if (!silencioso && !sosAtivo) falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
   await conectar();
@@ -689,19 +688,37 @@ $("btDiscreto").onclick = () => discreto(!document.body.classList.contains("disc
 discreto(ls.get("anjo.discreto") === "1");
 // sacudir: 5 picos fortes (> 2,5 g) em 3 s; só com a página aberta
 let sacudir = ls.get("anjo.sacudir") !== "0", picos = [];
-function botaoSacudir() { $("btSacudir").textContent = "📳 SOS ao sacudir: " + (sacudir ? "ligado" : "desligado"); }
+// estado do sensor de movimento: "?" (ainda sem leitura), "ok", "negado"
+let sensor = "?", ultimaLeitura = 0, maiorG = 0;
+function botaoSacudir() {
+  const info = !sacudir ? "" : sensor === "ok" ? " ✓" : sensor === "negado" ? " — sensor bloqueado" : " — toque aqui para liberar o sensor";
+  $("btSacudir").textContent = "📳 SOS ao sacudir: " + (sacudir ? "ligado" : "desligado") + info;
+}
 botaoSacudir();
-$("btSacudir").onclick = () => { sacudir = !sacudir; ls.set("anjo.sacudir", sacudir ? "1" : "0"); botaoSacudir(); pedirSensores(); };
-let sensoresPedidos = false;
-function pedirSensores() {   // iPhone: a permissão do sensor de movimento só pode ser pedida num toque
-  if (sensoresPedidos) return; sensoresPedidos = true;
-  try { if (window.DeviceMotionEvent && DeviceMotionEvent.requestPermission) DeviceMotionEvent.requestPermission().catch(() => {}); } catch {}
+$("btSacudir").onclick = () => {
+  if (sacudir && sensor !== "ok") { pedirSensores(); return; }   // 1º toque libera o sensor; depois liga/desliga
+  sacudir = !sacudir; ls.set("anjo.sacudir", sacudir ? "1" : "0"); botaoSacudir();
+};
+// iPhone: a permissão do sensor de movimento só pode ser pedida DIRETO num toque (antes de qualquer await)
+function pedirSensores() {
+  try {
+    if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === "function") {
+      DeviceMotionEvent.requestPermission().then(r => {
+        if (r !== "granted") { sensor = "negado"; botaoSacudir();
+          alert("O sensor de movimento foi negado. Para o SOS ao sacudir funcionar: feche o Safari por completo, abra esta página de novo e toque em Permitir quando o iPhone perguntar."); }
+      }).catch(() => {});
+    }
+  } catch {}
 }
 window.addEventListener("devicemotion", ev => {
-  if (!sacudir || sosAtivo || !par) return;
   const a = ev.accelerationIncludingGravity; if (!a || a.x == null) return;
-  const g = Math.hypot(a.x, a.y, a.z), agora = Date.now();
-  if (g > 25 && (!picos.length || agora - picos[picos.length - 1] > 150)) {
+  const agora = Date.now();
+  if (sensor !== "ok") { sensor = "ok"; botaoSacudir(); }
+  if (!sacudir || sosAtivo || !par) return;
+  const g = Math.hypot(a.x, a.y, a.z);   // em repouso ≈ 9,8
+  if (g > maiorG) maiorG = g;
+  // pico forte: > 2 g (andar fica perto de 1,3 g); 5 picos em 3 s disparam o SOS
+  if (g > 20 && (!picos.length || agora - picos[picos.length - 1] > 120)) {
     picos = picos.filter(t => agora - t < 3000); picos.push(agora);
     if (picos.length >= 5) { picos = []; dispararSos("sacudir"); }
   }
@@ -839,6 +856,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
+  pedirSensores();
   if (ativo && sosAtivo) { $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde"; return; }   // SOS: não para
   if (ativo) { await parar(); if (versaoNova) recarregar(); else setTimeout(entrarEspera, 1500); } else iniciar(); };
 $("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); };
