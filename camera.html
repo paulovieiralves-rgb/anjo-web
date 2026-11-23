@@ -87,13 +87,12 @@
   <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
   <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
   <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
-  <button id="btSos" class="vermelho" style="margin-top:10px">🆘 SOS — segure 2 segundos</button>
   <div class="linha"><button id="btSacudir">📳 SOS ao sacudir: ligado</button><button id="btDiscreto">🙈 Modo discreto</button></div>
   <details class="nota" style="margin-top:6px"><summary>🆘 Como pedir socorro sem abrir a tela (iPhone)</summary>
     <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
     o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
-    <p><b>Formas de acionar:</b> segurar o botão 🆘 por 2 s; sacudir o celular com força (5 vezes em 3 s, com esta página aberta);
-    ou um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
+    <p><b>Como acionar:</b> sacudir o celular com força, 5 vezes em até 3 segundos, com esta página aberta.
+    O botão 📳 precisa mostrar “ligado ✓”. Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
     <p><b>Criar o atalho:</b> app Atalhos → + → Adicionar ação → “Abrir URL” → cole o link → nomeie “Anjo SOS”.
     Depois ligue-o a um gesto: Ajustes → Acessibilidade → Toque → <b>Toque Traseiro</b> → Toque triplo → “Anjo SOS”
     (ou no <b>Botão de Ação</b> do iPhone 15 Pro/16, ou diga “E aí Siri, Anjo SOS”).</p>
@@ -105,7 +104,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C23";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C24";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -672,15 +671,6 @@ async function dispararSos(motivo) {
 function fimSos() {
   sosAtivo = false; ls.del("anjo.sos"); ls.del("anjo.sosMotivo"); clearInterval(sosRep); sosRep = null; marcaSos();
 }
-// botão: segurar 2 s
-(() => {
-  let t = null;
-  const soltar = () => { clearTimeout(t); t = null; $("btSos").textContent = "🆘 SOS — segure 2 segundos"; };
-  const apertar = ev => { ev.preventDefault(); pedirSensores(); $("btSos").textContent = "🆘 Continue segurando…";
-    t = setTimeout(() => { soltar(); dispararSos("botão"); $("btSos").textContent = "🆘 SOS enviado à central"; setTimeout(soltar, 4000); }, 2000); };
-  $("btSos").addEventListener("touchstart", apertar, { passive:false }); $("btSos").addEventListener("mousedown", apertar);
-  ["touchend", "touchcancel", "mouseup", "mouseleave"].forEach(e => $("btSos").addEventListener(e, () => { if (t) soltar(); }));
-})();
 // Modo discreto: continua transmitindo, mas sem mostrar câmera, mapa e rota (liga sozinho no SOS)
 function discreto(lig) { document.body.classList.toggle("discreto", lig); ls.set("anjo.discreto", lig ? "1" : "0");
   $("btDiscreto").textContent = lig ? "👁 Mostrar câmera e mapa" : "🙈 Modo discreto"; if (!lig && mapa) setTimeout(() => mapa.invalidateSize(), 100); }
