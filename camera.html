@@ -52,6 +52,8 @@
     padding:10px; font-size:16px; margin-top:6px; }
   .rota .linha button { margin-top:8px; padding:11px; }
   #rotaInfo { margin-top:8px; font-size:14px; }
+  #mapa.cheio .leaflet-top { top: env(safe-area-inset-top, 0px); }
+  #mapa.cheio a.sairCheio { width:auto !important; padding:0 12px; background:#dc2626 !important; color:#fff !important; font-size:16px !important; font-weight:bold; }
   #mapa.cheio { position:fixed; inset:0; height:100vh; height:100dvh; width:100vw; margin:0; border-radius:0; z-index:2000; }
   #mapa { height:48vh; min-height:300px; border-radius:12px; margin-top:10px; background:#1e293b; }
   .pin-alerta { background:#ef4444; color:#fff; border-radius:50%; width:22px; height:22px; line-height:22px; text-align:center; font-weight:700; border:2px solid #fff; }
@@ -109,7 +111,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C27";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C28";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -179,7 +181,7 @@ function iniciarMapa() {
     b.style.cssText = "width:30px;height:30px;line-height:30px;text-align:center;background:#fff;color:#000;font-size:20px";
     L.DomEvent.disableClickPropagation(b);
     b.onclick = e => { e.preventDefault(); const cheio = $("mapa").classList.toggle("cheio");
-      b.textContent = cheio ? "✕" : "⛶"; setTimeout(() => mapa.invalidateSize(), 50); };
+      b.textContent = cheio ? "✕ Sair do mapa" : "⛶"; b.classList.toggle("sairCheio", cheio); setTimeout(() => mapa.invalidateSize(), 50); };
     return b; } });
   new Cheio({ position: "topleft" }).addTo(mapa);
   setTimeout(() => mapa.invalidateSize(), 300);
