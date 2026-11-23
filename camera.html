@@ -112,7 +112,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C31";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C32";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -575,6 +575,7 @@ const ultimoPorChave = {}; let falandoAte = 0, ultimaPrioridade = 99, vozPt = nu
 function escolherVoz() { try { const vs = speechSynthesis.getVoices(); vozPt = vs.find(v => /pt[-_]BR/i.test(v.lang)) || vs.find(v => /^pt/i.test(v.lang)) || null; } catch {} }
 try { escolherVoz(); speechSynthesis.onvoiceschanged = escolherVoz; } catch {}
 function falar(texto, prioridade, chave, intervalo) {
+  try { if (sosAtivo) return; } catch {}   // em SOS o celular não fala nada
   try {
     if (modoAudio === "silencioso" || (modoAudio === "alertas" && prioridade > 2 && prioridade !== 6)) return;
     const agora = Date.now();
@@ -669,7 +670,7 @@ document.addEventListener("visibilitychange", async () => {
    Discreto: o celular não fala e a tela não muda (só um ponto vermelho pequeno no título).
    Liga a transmissão (câmera frontal, microfone e GPS) e avisa a central a cada 5 s. Só a central encerra. */
 let sosAtivo = ls.get("anjo.sos") === "1", sosRep = null, sosOkT = 0;
-function marcaSos() { $("nome").textContent = par ? par.nome + (sosAtivo ? " ·" : "") : "Câmera"; $("nome").style.color = sosAtivo ? (Date.now() - sosOkT < 12000 ? "#ef4444" : "#f97316") : ""; }
+function marcaSos() { $("nome").textContent = par ? par.nome : "Câmera"; $("nome").style.color = ""; }   // em SOS, nenhuma marca no celular
 async function dispararSos(motivo) {
   const ja = sosAtivo;
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
@@ -681,20 +682,27 @@ async function dispararSos(motivo) {
   clearInterval(sosRep); sosRep = setInterval(avisar, 5000); avisar();
 }
 function fimSos() {
+  discreto(false);
+  if (ativo) { $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho"; }   // desfaz o "parado" de fachada
   sosAtivo = false; ls.del("anjo.sos"); ls.del("anjo.sosMotivo"); clearInterval(sosRep); sosRep = null; marcaSos();
 }
 // Dois toques na imagem da câmera: esconde/mostra a imagem (a transmissão continua)
 (() => {
   const tela = $("tela"); let ultimo = 0;
-  const alternar = () => { const ocultar = !tela.classList.contains("semImagem"); tela.classList.toggle("semImagem", ocultar); ls.set("anjo.semImagem", ocultar ? "1" : "0"); };
+  const alternar = () => { if (sosAtivo) return; const ocultar = !tela.classList.contains("semImagem"); tela.classList.toggle("semImagem", ocultar); ls.set("anjo.semImagem", ocultar ? "1" : "0"); };
   tela.addEventListener("touchend", ev => { const agora = Date.now(); if (agora - ultimo < 350) { ev.preventDefault(); alternar(); ultimo = 0; } else ultimo = agora; });
   tela.addEventListener("dblclick", alternar);
   if (ls.get("anjo.semImagem") === "1") tela.classList.add("semImagem");
 })();
 // Modo discreto: continua transmitindo, mas sem mostrar câmera, mapa e rota (liga sozinho no SOS)
-function discreto(lig) { document.body.classList.toggle("discreto", lig); ls.set("anjo.discreto", lig ? "1" : "0");
-  $("btDiscreto").textContent = lig ? "👁 Mostrar câmera e mapa" : "🙈 Modo discreto"; if (!lig && mapa) setTimeout(() => mapa.invalidateSize(), 100); }
-$("btDiscreto").onclick = () => discreto(!document.body.classList.contains("discreto"));
+function discreto(lig) {
+  document.body.classList.toggle("discreto", lig); ls.set("anjo.discreto", lig ? "1" : "0");
+  $("btDiscreto").textContent = lig ? "👁 Mostrar câmera e mapa" : "🙈 Modo discreto"; if (!lig && mapa) setTimeout(() => mapa.invalidateSize(), 100);
+}
+$("btDiscreto").onclick = () => {
+  if (sosAtivo) { mapa && document.body.classList.remove("discreto"); document.body.classList.add("discreto"); return; }   // SOS: a imagem não volta
+  discreto(!document.body.classList.contains("discreto"));
+};
 discreto(ls.get("anjo.discreto") === "1");
 // sacudir: 5 picos fortes (> 2,5 g) em 3 s; só com a página aberta
 let sacudir = ls.get("anjo.sacudir") !== "0", picos = [];
@@ -812,6 +820,11 @@ setInterval(() => {
     : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.virtual ? " · 📷 " + ack.virtual : ""}${ack.gravando ? " · ⏺ gravando" : ""}`]
     : recente ? ["warn", "● Central conectada, mas sem imagem"]
     : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
+  if (sosAtivo) {   // SOS: o celular não mostra nada; só a central sabe
+    const fingeParado = $("btIniciar").textContent.startsWith("▶");
+    $("link").className = "link"; $("link").textContent = fingeParado ? "Transmissão parada" : "● Transmitindo";
+    ultimoLink = cls; return;
+  }
   $("link").className = "link " + cls; $("link").textContent = txt;
   if (ultimoLink && ultimoLink !== cls) {
     if (cls === "ok") falar("Central recebendo.", 6, "link", 5000);
