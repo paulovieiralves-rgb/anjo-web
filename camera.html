@@ -98,6 +98,12 @@
   <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
   <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
   <div class="linha"><button id="btSacudir">📳 SOS ao sacudir: ligado</button><button id="btDiscreto">🙈 Modo discreto</button></div>
+  <div id="caixaSenha" style="margin-top:8px;padding:10px;border-radius:10px;background:#1e293b">
+    <div><b>🔐 Senha falada para o SOS</b> <span id="senhaStatus" class="sub"></span></div>
+    <div class="sub" style="margin:4px 0">3 ou 4 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular durante a transmissão, aciona o SOS em silêncio. Fica guardada só na central.</div>
+    <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada" style="width:100%">
+    <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer">👁</button></div>
+  </div>
   <details class="nota" style="margin-top:6px"><summary>🆘 Como pedir socorro sem abrir a tela (iPhone)</summary>
     <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
     o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
@@ -114,7 +120,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C33";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C34";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -689,6 +695,12 @@ async function conectar() {
         else if (m.tipo === "desconectar") desconectadoPelaCentral(m);
         else if (m.tipo === "sos_ok") { sosOkT = Date.now(); marcaSos(); }
         else if (m.tipo === "risco_rotas") respostaRisco = m;
+        else if (m.tipo === "senha_ok") {
+          if (m.erro) statusSenha("— " + m.erro);
+          else { ls.set("anjo.senhaVoz", m.definida ? "1" : "0"); $("senhaFrase").value = "";
+                 statusSenha(m.definida ? "✓ cadastrada" + (m.voz && m.voz !== "pronto" ? ` (central: ${m.voz})` : "") : "— não cadastrada"); }
+        }
+        else if (m.tipo === "sos_remoto") dispararSos(m.motivo || "senha falada");
         else if (m.tipo === "sos_fim") fimSos();
       });
   try {
@@ -761,6 +773,20 @@ function fimSos() {
   tela.addEventListener("dblclick", alternar);
   if (ls.get("anjo.semImagem") === "1") tela.classList.add("semImagem");
 })();
+// Senha falada: a frase vai só para a central, que reconhece no áudio da transmissão
+function statusSenha(txt) { $("senhaStatus").textContent = txt; }
+statusSenha(ls.get("anjo.senhaVoz") === "1" ? "✓ cadastrada" : "— não cadastrada");
+$("btSenhaVer").onclick = () => { const i = $("senhaFrase"); i.type = i.type === "password" ? "text" : "password"; };
+$("btSenha").onclick = () => {
+  const f = $("senhaFrase").value.trim();
+  if (f.split(/\s+/).length < 3) { statusSenha("— use pelo menos 3 palavras"); return; }
+  if (!room || room.state !== "connected") { statusSenha("— conecte à central (▶ Iniciar) para salvar"); return; }
+  enviar({ tipo: "senha_voz", frase: f }); statusSenha("enviando…");
+};
+$("btSenhaApagar").onclick = () => {
+  if (!room || room.state !== "connected") { statusSenha("— conecte à central para apagar"); return; }
+  enviar({ tipo: "senha_voz", frase: "" }); statusSenha("apagando…");
+};
 // Modo discreto: continua transmitindo, mas sem mostrar câmera, mapa e rota (liga sozinho no SOS)
 function discreto(lig) {
   document.body.classList.toggle("discreto", lig); ls.set("anjo.discreto", lig ? "1" : "0");
