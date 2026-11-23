@@ -112,7 +112,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C29";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C30";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -151,8 +151,8 @@ else {
 
 /* ---------- mapa: percurso e posição atual ---------- */
 let mapa = null, trilha = null, eu = null, seguir = true, percurso = [];
-// Depois de 5 s sem tocar na tela, o mapa volta sozinho e centraliza na posição atual (câmera = este celular).
-const VOLTA_MS = 5000;
+// Depois de 10 s sem tocar na tela, o mapa volta sozinho e centraliza na posição atual (câmera = este celular).
+const VOLTA_MS = 10000;
 let ultimoToque = Date.now();
 ["touchstart", "mousedown", "wheel", "keydown"].forEach(ev => document.addEventListener(ev, () => ultimoToque = Date.now(), { passive: true, capture: true }));
 setInterval(() => {
