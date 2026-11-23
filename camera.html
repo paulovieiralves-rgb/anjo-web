@@ -104,7 +104,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C25";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C26";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -148,7 +148,10 @@ const VOLTA_MS = 5000;
 let ultimoToque = Date.now();
 ["touchstart", "mousedown", "wheel", "keydown"].forEach(ev => document.addEventListener(ev, () => ultimoToque = Date.now(), { passive: true, capture: true }));
 setInterval(() => {
-  if (seguir || !mapa || !eu || Date.now() - ultimoToque < VOLTA_MS) return;
+  if (!mapa || !eu || Date.now() - ultimoToque < VOLTA_MS) return;
+  // volta sempre que o centro do mapa estiver longe do assinante (arrastar, zoom com dois dedos, rota, etc.)
+  const c = mapa.latLngToContainerPoint(eu.getLatLng()), t = mapa.getSize();
+  if (Math.hypot(c.x - t.x / 2, c.y - t.y / 2) < 15 && mapa.getZoom() >= 16) { seguir = true; return; }
   seguir = true; mapa.setView(eu.getLatLng(), Math.max(mapa.getZoom(), 16), { animate: true });
 }, 1000);
 function iniciarMapa() {
