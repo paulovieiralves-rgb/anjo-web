@@ -103,6 +103,8 @@
     <div class="sub" style="margin:4px 0">3 ou 4 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular durante a transmissão, aciona o SOS em silêncio. Fica guardada só na central.</div>
     <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada" style="width:100%">
     <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer">👁</button></div>
+    <button id="btOuvir" style="width:100%;margin-top:6px">🎙 Ouvir a senha com a transmissão parada: desligado</button>
+    <div id="ouvirInfo" class="sub"></div>
   </div>
   <details class="nota" style="margin-top:6px"><summary>🆘 Como pedir socorro sem abrir a tela (iPhone)</summary>
     <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
@@ -120,7 +122,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C34";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C35";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -698,6 +700,8 @@ async function conectar() {
         else if (m.tipo === "senha_ok") {
           if (m.erro) statusSenha("— " + m.erro);
           else { ls.set("anjo.senhaVoz", m.definida ? "1" : "0"); $("senhaFrase").value = "";
+                 if (m.definida && fraseEnviada) ls.set("anjo.fraseLocal", fraseEnviada); else if (!m.definida) ls.del("anjo.fraseLocal");
+                 fraseEnviada = null; botaoOuvir(); escutaLocal();
                  statusSenha(m.definida ? "✓ cadastrada" + (m.voz && m.voz !== "pronto" ? ` (central: ${m.voz})` : "") : "— não cadastrada"); }
         }
         else if (m.tipo === "sos_remoto") dispararSos(m.motivo || "senha falada");
@@ -720,6 +724,7 @@ async function conectar() {
 }
 
 async function iniciar(silencioso = false) {
+  pararEscutaLocal();                 // transmitindo: quem ouve a senha é a central
   await sairEspera();
   avisoCentral = "";
   ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
@@ -739,6 +744,7 @@ async function parar() {
   clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
   try { await wakeLock?.release(); } catch {} wakeLock = null;
   await room?.disconnect(); room = null; ack = null; dets = null;
+  escutaLocal();                      // parado: o próprio celular passa a ouvir a senha
 }
 // a tela volta a ficar ligada quando o usuário retorna à página
 document.addEventListener("visibilitychange", async () => {
@@ -773,6 +779,77 @@ function fimSos() {
   tela.addEventListener("dblclick", alternar);
   if (ls.get("anjo.semImagem") === "1") tela.classList.add("semImagem");
 })();
+// Senha falada no próprio celular (C35, simulação do app nativo): com a transmissão PARADA e a página aberta,
+// o reconhecimento de voz do navegador escuta a frase; ao ouvir, liga a transmissão e entra no SOS discreto.
+// Com a transmissão ligada, quem escuta é a central (áudio da transmissão).
+let fraseEnviada = null, rec = null, ouvindoLocal = false, wakeEscuta = null, reinicios = 0;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let ouvirLocal = ls.get("anjo.ouvirLocal") === "1";
+function normalizar(t) { return (t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z ]+/g, " ").split(/\s+/).filter(Boolean); }
+function bateFrase(texto, frase) {           // todas as palavras, na ordem, numa janela curta (igual ao servidor)
+  const alvo = normalizar(frase), ouv = normalizar(texto);
+  if (!alvo.length || ouv.length < alvo.length) return false;
+  for (let ini = 0; ini < ouv.length; ini++) {
+    if (ouv[ini] !== alvo[0]) continue;
+    let i = ini, j = 0;
+    while (i < ouv.length && j < alvo.length && i - ini <= alvo.length + 2) { if (ouv[i] === alvo[j]) j++; i++; }
+    if (j === alvo.length) return true;
+  }
+  return false;
+}
+function infoOuvir(t) { $("ouvirInfo").textContent = t; }
+function botaoOuvir() {
+  $("btOuvir").textContent = "🎙 Ouvir a senha com a transmissão parada: " + (ouvirLocal ? "ligado" : "desligado");
+  if (!SR) infoOuvir("Este navegador não tem reconhecimento de voz.");
+  else if (ouvirLocal && !ls.get("anjo.fraseLocal")) infoOuvir("Salve a senha de novo (uma vez) para guardá-la também neste celular.");
+  else if (!ouvirLocal) infoOuvir("");
+}
+function pararEscutaLocal() {
+  ouvindoLocal = false;
+  try { rec?.abort(); } catch {}
+  rec = null;
+  try { wakeEscuta?.release(); } catch {} wakeEscuta = null;
+  if (ouvirLocal && SR) infoOuvir(ativo ? "Transmitindo: a central é quem ouve a senha." : "");
+}
+async function escutaLocal() {
+  const frase = ls.get("anjo.fraseLocal");
+  if (!SR || !ouvirLocal || !frase || ativo || sosAtivo || ouvindoLocal) { botaoOuvir(); return; }
+  ouvindoLocal = true;
+  try { navigator.wakeLock?.request("screen").then(w => { if (ouvindoLocal) wakeEscuta = w; else w.release(); }).catch(() => {}); } catch {}   // mantém a tela ligada (sem esperar)
+  const r = new SR();
+  rec = r;
+  r.lang = "pt-BR"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 3;
+  r.onstart = () => { reinicios = 0; infoOuvir("● Ouvindo a senha no celular (mantenha esta tela aberta)"); };
+  r.onresult = ev => {
+    for (let k = ev.resultIndex; k < ev.results.length; k++) {
+      for (let a = 0; a < ev.results[k].length; a++) {
+        const txt = ev.results[k][a].transcript;
+        if (a === 0) infoOuvir("● Ouvindo… entendeu: “" + txt.trim() + "”");
+        if (bateFrase(txt, frase)) { pararEscutaLocal(); dispararSos("senha falada (celular)"); return; }
+      }
+    }
+  };
+  r.onerror = ev => {
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+      ouvindoLocal = false; rec = null; infoOuvir("Microfone não liberado: toque no botão 🎙 para ativar.");
+    }
+  };
+  r.onend = () => {                          // o navegador encerra sozinho de tempos em tempos: recomeça
+    if (rec !== r || !ouvindoLocal) return;
+    ouvindoLocal = false; rec = null;
+    if (++reinicios > 20) { infoOuvir("A escuta parou: toque no botão 🎙 para reativar."); return; }
+    setTimeout(escutaLocal, 300);
+  };
+  try { r.start(); } catch (e) { ouvindoLocal = false; rec = null; infoOuvir("Não consegui ligar o microfone: toque no botão 🎙."); }
+}
+$("btOuvir").onclick = () => {
+  if (!SR) { botaoOuvir(); return; }
+  if (ouvirLocal && ouvindoLocal) { ouvirLocal = false; ls.set("anjo.ouvirLocal", "0"); pararEscutaLocal(); botaoOuvir(); return; }
+  ouvirLocal = true; ls.set("anjo.ouvirLocal", "1"); botaoOuvir();
+  pararEscutaLocal(); escutaLocal();         // no iPhone o 1º início precisa vir de um toque
+};
+botaoOuvir();
+setTimeout(() => { if (!ativo) escutaLocal(); }, 1500);   // página aberta e parada: tenta já ouvir (o iPhone pode pedir um toque)
 // Senha falada: a frase vai só para a central, que reconhece no áudio da transmissão
 function statusSenha(txt) { $("senhaStatus").textContent = txt; }
 statusSenha(ls.get("anjo.senhaVoz") === "1" ? "✓ cadastrada" : "— não cadastrada");
@@ -781,10 +858,12 @@ $("btSenha").onclick = () => {
   const f = $("senhaFrase").value.trim();
   if (f.split(/\s+/).length < 3) { statusSenha("— use pelo menos 3 palavras"); return; }
   if (!room || room.state !== "connected") { statusSenha("— conecte à central (▶ Iniciar) para salvar"); return; }
+  fraseEnviada = f;
   enviar({ tipo: "senha_voz", frase: f }); statusSenha("enviando…");
 };
 $("btSenhaApagar").onclick = () => {
   if (!room || room.state !== "connected") { statusSenha("— conecte à central para apagar"); return; }
+  fraseEnviada = "";
   enviar({ tipo: "senha_voz", frase: "" }); statusSenha("apagando…");
 };
 // Modo discreto: continua transmitindo, mas sem mostrar câmera, mapa e rota (liga sozinho no SOS)
