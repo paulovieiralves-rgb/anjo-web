@@ -53,6 +53,8 @@
     padding:10px; font-size:16px; margin-top:6px; }
   .rota .linha button { margin-top:8px; padding:11px; }
   #rotaInfo { margin-top:8px; font-size:14px; }
+  a.botaoLink { display:inline-block; padding:8px 10px; border-radius:8px; background:#334155; color:#e2e8f0; text-decoration:none; font-size:14px; margin:2px 4px 0 0; }
+  .usarAlt { padding:4px 10px !important; font-size:13px !important; width:auto !important; }
   #mapa.cheio .leaflet-top { top: env(safe-area-inset-top, 0px); }
   #mapa.cheio a.sairCheio { width:auto !important; padding:0 12px; background:#dc2626 !important; color:#fff !important; font-size:16px !important; font-weight:bold; }
   #mapa.cheio { position:fixed; inset:0; height:100vh; height:100dvh; width:100vw; margin:0; border-radius:0; z-index:2000; }
@@ -112,7 +114,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C32";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C33";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -484,21 +486,69 @@ async function tracarRota() {
       () => falha(new Error("Sem localização: ligue o GPS ou digite a origem.")), { enableHighAccuracy: true, timeout: 10000 }));
     const destino = await geocodificar(para, $("rotaPara"));
     $("rotaInfo").textContent = "Calculando o trajeto…";
-    const d = await buscarJson(`https://routing.openstreetmap.de/${PERFIL[modo]}/route/v1/driving/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson`, 15000);
+    const d = await buscarJson(`https://routing.openstreetmap.de/${PERFIL[modo]}/route/v1/driving/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson&alternatives=3`, 15000);
     if (d.code !== "Ok" || !d.routes || !d.routes.length) throw new Error("Não foi possível calcular a rota.");
-    const rt = d.routes[0];
-    rota = { modo, origem, destino, distancia: rt.distance, duracao: rt.duration,
-             coords: rt.geometry.coordinates.map(([lng, lat]) => [lat, lng]) };
-    ls.set("anjo.rota", JSON.stringify(rota));
-    desenharRota(true); enviarRota();
-    falar(`Rota traçada: ${textoDist(rota.distancia)}, cerca de ${Math.max(1, Math.round(rota.duracao / 60))} minutos.`, 6, "rota", 0);
+    opcoesRota = d.routes.slice(0, 3).map(rt => ({ modo, origem, destino, distancia: rt.distance, duracao: rt.duration,
+             coords: rt.geometry.coordinates.map(([lng, lat]) => [lat, lng]), risco: null }));
+    $("rotaInfo").textContent = opcoesRota.length > 1 ? `Avaliando o risco de ${opcoesRota.length} caminhos…` : "Avaliando o risco do caminho…";
+    await avaliarRotas();
+    escolherRota(indiceMaisSegura(), true);
   } catch (e) { $("rotaInfo").textContent = "⚠ " + (e.message || e); }
 }
+/* ---------- Rotas alternativas: mais rápida x mais segura ----------
+   O OSRM devolve até 3 caminhos; a central dá a nota de risco de cada um
+   (alertas registrados perto do caminho e câmeras que o cobrem). */
+let opcoesRota = [], pedidoRisco = 0, respostaRisco = null;
+function reduzirCoords(c, max = 300) { const passo = Math.max(1, Math.ceil(c.length / max));
+  return c.filter((_, i) => i % passo === 0 || i === c.length - 1).map(([a, b]) => [+a.toFixed(5), +b.toFixed(5)]); }
+async function avaliarRotas() {
+  const id = ++pedidoRisco; respostaRisco = null;
+  if (!room || room.state !== "connected") return;   // sem central: mostra só tempo e distância
+  enviar({ tipo: "avaliar_rotas", id, rotas: opcoesRota.map(o => reduzirCoords(o.coords)) });
+  for (let i = 0; i < 30 && !(respostaRisco && respostaRisco.id === id); i++) await new Promise(r => setTimeout(r, 100));
+  if (respostaRisco && respostaRisco.id === id) respostaRisco.notas.forEach((n, i) => { if (opcoesRota[i]) opcoesRota[i].risco = n; });
+}
+const pontos = o => o.risco ? o.risco.graves * 3 + o.risco.alertas - o.risco.cameras * 0.3 : 0;
+function indiceMaisRapida() { let m = 0; opcoesRota.forEach((o, i) => { if (o.duracao < opcoesRota[m].duracao) m = i; }); return m; }
+function indiceMaisSegura() {
+  if (!opcoesRota.some(o => o.risco)) return indiceMaisRapida();
+  let m = 0; opcoesRota.forEach((o, i) => { const a = pontos(o), b = pontos(opcoesRota[m]);
+    if (a < b || (a === b && o.duracao < opcoesRota[m].duracao)) m = i; }); return m;
+}
+function escolherRota(i, enquadrar) {
+  rota = { ...opcoesRota[i], escolhida: i };
+  ls.set("anjo.rota", JSON.stringify(rota));
+  desenharRota(enquadrar); enviarRota();
+  if (enquadrar) falar(`Rota traçada: ${textoDist(rota.distancia)}, cerca de ${Math.max(1, Math.round(rota.duracao / 60))} minutos.`, 6, "rota", 0);
+}
+let linhasAlt = [];
+function desenharAlternativas() {
+  linhasAlt.forEach(l => l.remove()); linhasAlt = [];
+  if (!rota || opcoesRota.length < 2) return;
+  opcoesRota.forEach((o, i) => { if (i === rota.escolhida) return;
+    const l = L.polyline(o.coords, { color: "#64748b", weight: 5, opacity: 0.6, dashArray: "6 6" }).addTo(mapa);
+    l.on("click", () => escolherRota(i, false)); linhasAlt.push(l); });
+  rotaLinha && rotaLinha.bringToFront();
+}
+function textoRisco(o) {
+  if (!o.risco) return "risco: sem dados da central";
+  const r = o.risco, partes = [];
+  partes.push(r.alertas ? `⚠ ${r.alertas} alerta${r.alertas > 1 ? "s" : ""}${r.graves ? ` (${r.graves} grave${r.graves > 1 ? "s" : ""})` : ""}` : "✅ sem alertas");
+  partes.push(`📷 ${r.cameras} câmera${r.cameras === 1 ? "" : "s"}`);
+  return partes.join(" · ");
+}
+function linkGoogle() {
+  const m = { foot: "walking", bike: "bicycling", car: "driving" }[rota.modo];
+  const c = rota.coords, passos = [];   // até 8 pontos intermediários para o Google seguir o mesmo caminho
+  for (let k = 1; k <= 8; k++) { const p = c[Math.floor(k * c.length / 9)]; if (p) passos.push(p[0].toFixed(5) + "," + p[1].toFixed(5)); }
+  return `https://www.google.com/maps/dir/?api=1&origin=${rota.origem.lat},${rota.origem.lng}&destination=${rota.destino.lat},${rota.destino.lng}&travelmode=${m}&waypoints=${encodeURIComponent(passos.join("|"))}`;
+}
+function linkWaze() { return `https://waze.com/ul?ll=${rota.destino.lat},${rota.destino.lng}&navigate=yes`; }
 function textoDist(m) { return m >= 1000 ? (m / 1000).toFixed(1).replace(".", ",") + " km" : Math.round(m) + " m"; }
 function desenharRota(enquadrar) {
   if (!mapa) return;
   if (rotaLinha) rotaLinha.remove(); rotaMarcas.forEach(m => m.remove()); rotaLinha = null; rotaMarcas = [];
-  if (!rota) { $("rotaInfo").textContent = ""; return; }
+  if (!rota) { $("rotaInfo").textContent = ""; linhasAlt.forEach(l => l.remove()); linhasAlt = []; opcoesRota = []; return; }
   rotaLinha = L.polyline(rota.coords, { color: "#a855f7", weight: 6, opacity: 0.8 }).addTo(mapa);
   const pino = (ll, cor, txt) => L.circleMarker(ll, { radius: 9, color: "#fff", weight: 2, fillColor: cor, fillOpacity: 1 }).addTo(mapa).bindTooltip(txt);
   rotaMarcas = [pino([rota.origem.lat, rota.origem.lng], "#22c55e", "Origem: " + rota.origem.nome),
@@ -506,7 +556,23 @@ function desenharRota(enquadrar) {
   if (enquadrar) { seguir = false; mapa.fitBounds(rotaLinha.getBounds(), { padding: [20, 20] }); }
   const nomes = { foot: "a pé", bike: "de bike", car: "de carro" };
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]);
-  $("rotaInfo").innerHTML = `🧭 <b>${textoDist(rota.distancia)}</b> · ${Math.max(1, Math.round(rota.duracao / 60))} min ${nomes[rota.modo]}<br>até ${esc(rota.destino.nome)}`;
+  const min = o => Math.max(1, Math.round(o.duracao / 60));
+  let html = `🧭 <b>${textoDist(rota.distancia)}</b> · ${min(rota)} min ${nomes[rota.modo]}<br>até ${esc(rota.destino.nome)}`;
+  if (opcoesRota.length > 1 && rota.escolhida != null) {
+    const rapida = indiceMaisRapida(), segura = indiceMaisSegura();
+    html += `<div style="margin-top:6px">` + opcoesRota.map((o, i) => {
+      const rotulos = [i === rapida ? "⚡ mais rápida" : "", i === segura && opcoesRota.some(x => x.risco) ? "🛡 mais segura" : ""].filter(Boolean).join(" · ") || "alternativa";
+      const dif = i === rapida ? "" : ` (+${min(o) - min(opcoesRota[rapida])} min)`;
+      return `<div style="padding:6px;margin:4px 0;border-radius:8px;border:2px solid ${i === rota.escolhida ? "#a855f7" : "#334155"}">
+        <b>${String.fromCharCode(65 + i)} · ${rotulos}</b> — ${textoDist(o.distancia)} · ${min(o)} min${dif}<br><span class="sub">${textoRisco(o)}</span>
+        ${i === rota.escolhida ? " <b style='color:#a855f7'>✔ em uso</b>" : ` <button class="usarAlt" data-i="${i}">Usar esta</button>`}</div>`;
+    }).join("") + `</div>`;
+  } else if (rota.risco) html += `<br><span class="sub">${textoRisco(rota)}</span>`;
+  html += `<div class="linha" style="margin-top:6px"><a class="botaoLink" target="_blank" rel="noopener" href="${linkGoogle()}">🗺 Seguir no Google Maps</a>
+    <a class="botaoLink" target="_blank" rel="noopener" href="${linkWaze()}">🚗 Abrir no Waze</a></div>`;
+  $("rotaInfo").innerHTML = html;
+  $("rotaInfo").querySelectorAll(".usarAlt").forEach(b => b.onclick = () => escolherRota(+b.dataset.i, false));
+  desenharAlternativas();
   $("rotaModo").value = rota.modo;
 }
 function enviarRota() {
@@ -622,6 +688,7 @@ async function conectar() {
         else if (m.tipo === "alerta") mostrarAlerta(m);
         else if (m.tipo === "desconectar") desconectadoPelaCentral(m);
         else if (m.tipo === "sos_ok") { sosOkT = Date.now(); marcaSos(); }
+        else if (m.tipo === "risco_rotas") respostaRisco = m;
         else if (m.tipo === "sos_fim") fimSos();
       });
   try {
