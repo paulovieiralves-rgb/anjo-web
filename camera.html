@@ -112,7 +112,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C30";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C31";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -675,7 +675,8 @@ async function dispararSos(motivo) {
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
   discreto(true);
   if (!ja) console.log("SOS:", motivo);
-  if (!ativo) { if (!ja || !room) frontal = true; await iniciar(true); }
+  if (!ativo) { frontal = true; await iniciar(true); }
+  else if (!frontal) await trocarCamera(true);   // já transmitindo: passa para a câmera da frente
   const avisar = () => { enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" }); marcaSos(); };
   clearInterval(sosRep); sosRep = setInterval(avisar, 5000); avisar();
 }
@@ -869,11 +870,21 @@ $("btIniciar").onclick = async () => {
   if (ativo && sosAtivo) { $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde"; return; }   // SOS: não para
   if (ativo) { await parar(); if (versaoNova) recarregar(); else setTimeout(entrarEspera, 1500); } else iniciar(); };
 $("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); };
-$("btCam").onclick = async () => {
-  frontal = !frontal;
-  const pub = room?.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
-  try { await pub?.videoTrack?.restartTrack({ facingMode: frontal ? "user" : "environment" }); } catch (e) { console.log(e); }
-};
+async function trocarCamera(paraFrontal) {
+  frontal = paraFrontal;
+  const R = LivekitClient, pub = room?.localParticipant.getTrackPublication(R.Track.Source.Camera);
+  try { await pub.videoTrack.restartTrack({ facingMode: frontal ? "user" : "environment" }); }
+  catch (e) {   // reserva: desliga e religa a câmera já com o lado certo
+    console.log(e);
+    try {
+      await room.localParticipant.setCameraEnabled(false);
+      await room.localParticipant.setCameraEnabled(true, { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution });
+      const p2 = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
+      if (p2 && p2.videoTrack) p2.videoTrack.attach($("video"));
+    } catch (e2) { console.log(e2); }
+  }
+}
+$("btCam").onclick = () => trocarCamera(!frontal);
 $("btAudio").onclick = () => {
   modoAudio = MODOS[(MODOS.indexOf(modoAudio) + 1) % MODOS.length]; ls.set("anjo.audio", modoAudio);
   $("btAudio").textContent = ROT[modoAudio]; if (modoAudio === "silencioso") try { speechSynthesis.cancel(); } catch {}
