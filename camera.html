@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Anjo Câmera">
 <meta name="theme-color" content="#0f172a">
@@ -14,6 +14,7 @@
 <style>
   :root { --bg:#0f172a; --painel:#1e293b; --txt:#e2e8f0; --sub:#94a3b8; }
   * { box-sizing:border-box; }
+  html, body { touch-action: manipulation; }   /* sem zoom da página por dois toques no Safari */
   body { margin:0; font:15px system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--txt);
          padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom)); }
   h1 { font-size:20px; margin:14px 0 4px; }
@@ -111,7 +112,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C28";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C29";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
