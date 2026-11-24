@@ -122,7 +122,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C37";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C38";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -935,7 +935,7 @@ window.addEventListener("devicemotion", ev => {
 
 // A central pode desconectar (ou bloquear) este celular: para tudo e fica EM ESPERA,
 // conectado à sala só por dados (sem câmera, microfone nem GPS), até a central pedir a reconexão.
-let avisoCentral = "", espera = null, emEspera = false, esperaHb = null;
+let avisoCentral = "", espera = null, emEspera = false, esperaHb = null, esperaFim = null;
 async function desconectadoPelaCentral(m) {
   if (!ativo && avisoCentral) return;
   falar(m.mensagem || "Desconectado pela central", 1, "desconectar", 0);
@@ -955,6 +955,12 @@ async function entrarEspera() {
   if (avisoCentral.startsWith("⛔") || avisoCentral.startsWith("⚠")) return;   // bloqueado ou token recusado: só QR novo
   if (!avisoCentral && ls.get("anjo.espera")) avisoCentral = "⏏ Desconectado pela central — aguardando a central reconectar (ou toque em Iniciar)";
   emEspera = true;
+  // Economia de minutos do LiveKit: a espera (conexão só de dados) dura no máximo 10 min; depois, só tocando em Iniciar
+  if (!esperaFim) esperaFim = setTimeout(async () => {
+    esperaFim = null; await sairEspera(); esperaFim = "fim";
+    avisoCentral = "⏸ Em pausa para economizar — toque em ▶ Iniciar para transmitir";
+  }, 10 * 60000);
+  if (esperaFim === "fim") return;
   if (espera) return;
   const R = LivekitClient;
   espera = new R.Room({ adaptiveStream:false, dynacast:false });
@@ -979,6 +985,8 @@ async function tokenInvalido() {
 }
 async function sairEspera() {
   emEspera = false; ls.del("anjo.espera"); clearInterval(esperaHb);
+  if (esperaFim && esperaFim !== "fim") clearTimeout(esperaFim);
+  esperaFim = null;
   const r = espera; espera = null;
   if (r) await r.disconnect().catch(() => {});
 }
