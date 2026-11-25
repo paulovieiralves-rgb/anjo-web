@@ -166,10 +166,13 @@
       <b>🆘 Pedir socorro</b>
       <button id="btSacudir">📳 SOS ao sacudir: ligado</button>
       <div id="caixaSenha" style="margin-top:10px">
-        <div><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
-        <div class="sub" style="margin:4px 0">3 a 6 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Com a orelha verde, falada perto do celular, aciona o SOS em silêncio: parado, quem ouve é o celular; transmitindo, a central.</div>
-        <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada">
-        <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer" class="pequeno">👁</button></div>
+        <div class="linha" style="align-items:center"><div style="flex:1"><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
+          <button id="btSenhaMudar" class="pequeno" style="display:none;margin-top:0">Mudar senha</button></div>
+        <div id="senhaForm">
+          <div class="sub" style="margin:4px 0">3 a 6 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular, aciona o SOS em silêncio: parado, quem ouve é o celular; transmitindo, a central.</div>
+          <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada">
+          <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer" class="pequeno">👁</button></div>
+        </div>
         <button id="btOuvir" class="ouvir">Ouvindo</button>
         <div id="ouvirInfo" class="sub"></div>
       </div>
@@ -200,7 +203,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C41";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C42";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -891,10 +894,10 @@ function botaoOuvir() {
   const x = ouvirLocal ? "" : '<line x1="3" y1="3" x2="21" y2="21" stroke="#ef4444" stroke-width="2.6"/><line x1="21" y1="3" x2="3" y2="21" stroke="#ef4444" stroke-width="2.6"/>';
   $("btOuvir").innerHTML = `<svg viewBox="0 0 24 24" width="50" height="50" style="flex:none" fill="none" stroke="${ouvirLocal ? "#22c55e" : "#94a3b8"}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
     + '<path d="M6 9a6 6 0 1 1 12 0c0 3.2-2.2 4.4-3.4 6.1-.9 1.3-1 2.4-1.6 3.4A3 3 0 0 1 8 17"/><path d="M9.5 9.2a2.5 2.5 0 1 1 5 0c0 1.6-2 2.2-2 3.8"/>'
-    + x + `</svg><span>${ouvirLocal ? "Ouvindo ativado" : "Ouvindo desativado"}<br><small>${ouvirLocal ? "a senha falada aciona o SOS, transmitindo ou não" : "a senha falada não aciona o SOS"}</small></span>`;
+    + x + `</svg><span>${ouvirLocal ? "Ouvindo ativado" : "Ouvindo desativado"}</span>`;
   $("btOuvir").classList.toggle("ligado", ouvirLocal);
   if (!SR) infoOuvir("Este navegador não tem reconhecimento de voz.");
-  else if (ouvirLocal && !ls.get("anjo.fraseLocal")) infoOuvir("Salve a senha de novo (uma vez) para guardá-la também neste celular.");
+  else if (ouvirLocal && !ls.get("anjo.fraseLocal")) infoOuvir(ls.get("anjo.senhaVoz") === "1" ? "Toque em Mudar senha e salve-a de novo (uma vez) para o celular também ouvir com a transmissão parada." : "");
   else if (!ouvirLocal) infoOuvir("");
 }
 function pararEscutaLocal() {
@@ -946,8 +949,19 @@ $("btOuvir").onclick = () => {
 botaoOuvir();
 setTimeout(() => { if (!ativo) escutaLocal(); }, 1500);   // página aberta e parada: tenta já ouvir (o iPhone pode pedir um toque)
 // Senha falada: a frase vai só para a central, que reconhece no áudio da transmissão
-function statusSenha(txt) { $("senhaStatus").textContent = txt; }
-statusSenha(ls.get("anjo.senhaVoz") === "1" ? "✓ cadastrada" : ls.get("anjo.fraseLocal") ? "✓ guardada neste celular" : "— não cadastrada");
+// Senha já gravada: esconde o campo e a explicação; "Mudar senha" abre de novo
+let editandoSenha = false;
+function telaSenha() {
+  const tem = ls.get("anjo.senhaVoz") === "1" || !!ls.get("anjo.fraseLocal");
+  const abrir = !tem || editandoSenha;
+  $("senhaForm").style.display = abrir ? "" : "none";
+  $("btSenhaMudar").style.display = tem ? "" : "none";
+  $("btSenhaMudar").textContent = editandoSenha ? "Cancelar" : "Mudar senha";
+  try { botaoOuvir(); } catch {}
+}
+$("btSenhaMudar").onclick = () => { editandoSenha = !editandoSenha; $("senhaFrase").value = ""; telaSenha(); if (editandoSenha) $("senhaFrase").focus(); };
+function statusSenha(txt) { $("senhaStatus").textContent = txt; if (/^✓|^— não cadastrada/.test(txt)) editandoSenha = false; telaSenha(); }
+statusSenha(ls.get("anjo.senhaVoz") === "1" ? "✓ cadastrada" : ls.get("anjo.fraseLocal") ? "✓ gravada" : "— não cadastrada");
 $("btSenhaVer").onclick = () => { const i = $("senhaFrase"); i.type = i.type === "password" ? "text" : "password"; };
 $("btSenha").onclick = () => {
   const f = $("senhaFrase").value.trim();
@@ -966,7 +980,7 @@ $("btSenha").onclick = () => {
   ls.set("anjo.fraseLocal", f);                 // guardada já neste celular (escuta com a transmissão parada)
   if (!room || room.state !== "connected") {
     ls.set("anjo.senhaPendente", "1"); $("senhaFrase").value = "";
-    statusSenha("✓ guardada neste celular (vai para a central ao iniciar a transmissão)");
+    statusSenha("✓ gravada (vai para a central ao iniciar)");
     botaoOuvir(); pararEscutaLocal(); escutaLocal(); return;
   }
   fraseEnviada = f;
