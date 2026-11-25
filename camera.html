@@ -22,15 +22,15 @@
   .link { border-radius:8px; padding:10px; margin:10px 0; font-weight:600; background:#334155; }
   .ok { background:#15803d; } .warn { background:#a16207; } .mau { background:#b91c1c; }
   #alerta { display:none; background:#dc2626; border-radius:8px; padding:10px; font-weight:700; margin-bottom:10px; }
-  #tela { position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; }
+  #tela { background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; }
   #tela video, #tela canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
   #tela { touch-action: manipulation; -webkit-user-select:none; user-select:none; }
   #tela .oculta { display:none; position:absolute; inset:0; align-items:center; justify-content:center; text-align:center; color:#64748b; font-size:14px; padding:20px; }
-  #tela.semImagem { aspect-ratio:auto; height:90px; }
+  #tela.semImagem { aspect-ratio:auto; }
   #tela.semImagem video, #tela.semImagem canvas { visibility:hidden; }
   #tela.semImagem .oculta { display:flex; }
   #cont { margin:10px 0 4px; }
-  .rota { background:var(--painel); border-radius:12px; padding:10px; margin-top:10px; }
+  .rota { margin-top:8px; }
   .campo { position:relative; }
   .campo input { padding-right:52px !important; }
   .mic { position:absolute; right:4px; top:10px; width:42px; height:38px; margin:0; padding:0; border-radius:8px;
@@ -58,7 +58,7 @@
   #mapa.cheio .leaflet-top { top: env(safe-area-inset-top, 0px); }
   #mapa.cheio a.sairCheio { width:auto !important; padding:0 12px; background:#dc2626 !important; color:#fff !important; font-size:16px !important; font-weight:bold; }
   #mapa.cheio { position:fixed; inset:0; height:100vh; height:100dvh; width:100vw; margin:0; border-radius:0; z-index:2000; }
-  #mapa { height:48vh; min-height:300px; border-radius:12px; margin-top:10px; background:#1e293b; }
+  #mapa { border-radius:12px; margin-top:10px; background:#1e293b; }
   .pin-alerta { background:#ef4444; color:#fff; border-radius:50%; width:22px; height:22px; line-height:22px; text-align:center; font-weight:700; border:2px solid #fff; }
   button { width:100%; border:0; border-radius:10px; padding:14px; font-size:15px; font-weight:600; color:#fff; background:#334155; margin-top:10px; }
   .linha { display:flex; gap:10px; } .linha button { flex:1; }
@@ -67,7 +67,40 @@
   #semPar { margin-top:30vh; text-align:center; }
   /* Safari: tira as "costuras" finas entre os pedaços (tiles) do mapa */
   .leaflet-tile-container img.leaflet-tile { width:256.6px !important; height:256.6px !important; }
-  body.discreto #tela, body.discreto #cont, body.discreto #mapa, body.discreto .rota, body.discreto #alerta { display:none !important; }
+  /* ---- tela limpa (C39): cabeçalho, mapa protagonista, faixa "à frente", abas ---- */
+  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  #topo { display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:10px; }
+  #nome { font-size:18px; font-weight:700; }
+  #topo .link { margin:2px 0 0; padding:0; background:none !important; font-size:13px; font-weight:500; color:var(--sub); }
+  #topo .link.ok { color:#22c55e; } #topo .link.warn { color:#facc15; } #topo .link.mau { color:#f87171; }
+  button.icone { width:44px; height:44px; padding:0; margin:0; font-size:22px; border-radius:50%; flex:none; }
+  button.pequeno { flex:0 0 auto !important; width:auto; padding-left:14px; padding-right:14px; }
+  h2 { font-size:17px; margin:16px 0 8px; }
+  .cartao { background:var(--painel); border-radius:12px; padding:12px; margin-top:10px; }
+  .cartao input { width:100%; background:#0f172a; color:var(--txt); border:1px solid #334155; border-radius:8px; padding:10px; font-size:16px; margin-top:6px; }
+  #mapaCaixa { position:relative; }
+  #mapa { height:calc(100vh - 430px); height:calc(100dvh - 430px); min-height:230px; }
+  #tela { position:absolute; right:8px; bottom:8px; width:30%; max-width:140px; z-index:500; border:2px solid #fff; border-radius:10px; box-shadow:0 2px 8px #0008; }
+  #tela.semImagem { height:44px; width:44%; }
+  #tela .oculta { font-size:11px; padding:4px; }
+  body.soPosicao #tela { display:none; }
+  .frente { border-radius:10px; padding:10px 12px; margin-top:8px; font-size:14px; }
+  .frente.neutro { background:#1e293b; color:var(--sub); }
+  .frente.calmo { background:#14532d; color:#bbf7d0; }
+  .frente.atencao { background:#713f12; color:#fde68a; }
+  .frente.perigo { background:#7f1d1d; color:#fecaca; }
+  .tecnico { color:#64748b; font-size:12px; margin-top:6px; min-height:15px; }
+  #rotaInfo:empty { display:none; }
+  .hist { background:var(--painel); border-radius:10px; padding:10px; margin-bottom:8px; border-left:4px solid #d97706; }
+  .hist.grave { border-left-color:#ef4444; }
+  .hist small { color:var(--sub); display:block; }
+  #abas { position:fixed; left:0; right:0; bottom:0; z-index:1500; display:flex; background:#0b1222; border-top:1px solid #1e293b;
+          padding-bottom:env(safe-area-inset-bottom); }
+  #abas button { flex:1; margin:0; border-radius:0; background:none; color:var(--sub); font-size:12px; font-weight:600; padding:8px 0 10px; }
+  #abas button span { display:block; font-size:20px; }
+  #abas button.sel { color:#fff; }
+  body.discreto #tela, body.discreto #cont, body.discreto #mapaCaixa, body.discreto .rota, body.discreto #alerta,
+  body.discreto #frente, body.discreto #histLista, body.discreto .tecnico { display:none !important; }
 </style>
 </head>
 <body>
@@ -77,52 +110,94 @@
 </div>
 
 <div id="app" style="display:none">
-  <h1 id="nome">Câmera</h1>
-  <div class="sub" id="validade"></div>
-  <div id="link" class="link">Transmissão parada</div>
+  <header id="topo">
+    <div style="min-width:0">
+      <div id="nome">Câmera</div>
+      <div id="link" class="link">Transmissão parada</div>
+    </div>
+    <button id="btEngrenagem" class="icone" aria-label="Ajustes">⚙</button>
+  </header>
   <button id="btAtualizar" class="verde" style="display:none">⟳ Versão nova disponível — toque para atualizar</button>
   <div id="alerta"></div>
-  <div id="tela"><video id="video" autoplay playsinline muted></video><canvas id="caixas"></canvas><div class="oculta">📷 Imagem oculta (a transmissão continua) · toque duas vezes para mostrar</div></div>
-  <div id="cont"></div>
-  <div class="sub" id="gpsInfo"></div>
-  <div id="mapa"></div>
-  <div class="rota">
-    <select id="rotaModo"><option value="foot">🚶 A pé</option><option value="bike">🚲 Bike</option><option value="car">🚗 Carro</option></select>
-    <div class="campo"><input id="rotaDe" placeholder="Origem (vazio = minha localização)" autocomplete="off"><button class="mic" id="micDe" title="Falar a origem">🎤</button><div class="sugestoes" id="sugDe"></div></div>
-    <div class="campo"><input id="rotaPara" placeholder="Destino: endereço, restaurante, parque…" autocomplete="off"><button class="mic" id="micPara" title="Falar o destino">🎤</button><div class="sugestoes" id="sugPara"></div></div>
-    <div class="linha"><button id="btMapaDe">📍 Origem no mapa</button><button id="btMapaPara">📍 Destino no mapa</button></div>
-    <div class="linha"><button id="btRota" class="verde">🧭 Traçar rota</button><button id="btLimparRota">Limpar</button></div>
-    <div id="rotaInfo" class="sub"></div>
-  </div>
-  <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
-  <div class="linha"><button id="btGravar">⏺ Gravar na central</button><button id="btCam">🔄 Câmera</button></div>
-  <div class="linha"><button id="btAudio">🔊 Áudio: alertas e resumo</button><button id="btDesparear">Desparear</button></div>
-  <div class="linha"><button id="btSacudir">📳 SOS ao sacudir: ligado</button><button id="btDiscreto">🙈 Modo discreto</button></div>
-  <div id="caixaSenha" style="margin-top:8px;padding:10px;border-radius:10px;background:#1e293b">
-    <div><b>🔐 Senha falada para o SOS</b> <span id="senhaStatus" class="sub"></span></div>
-    <div class="sub" style="margin:4px 0">3 ou 4 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular, aciona o SOS em silêncio: transmitindo, quem ouve é a central; com a transmissão parada, o próprio celular ouve (botão 🎙 abaixo).</div>
-    <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada" style="width:100%">
-    <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer">👁</button></div>
-    <button id="btOuvir" style="width:100%;margin-top:6px">🎙 Ouvir a senha com a transmissão parada: desligado</button>
-    <div id="ouvirInfo" class="sub"></div>
-  </div>
-  <details class="nota" style="margin-top:6px"><summary>🆘 Como pedir socorro sem abrir a tela (iPhone)</summary>
-    <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
-    o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
-    <p><b>Como acionar:</b> sacudir o celular com força, 5 vezes em até 3 segundos, com esta página aberta.
-    O botão 📳 precisa mostrar “ligado ✓”. Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
-    <p><b>Criar o atalho:</b> app Atalhos → + → Adicionar ação → “Abrir URL” → cole o link → nomeie “Anjo SOS”.
-    Depois ligue-o a um gesto: Ajustes → Acessibilidade → Toque → <b>Toque Traseiro</b> → Toque triplo → “Anjo SOS”
-    (ou no <b>Botão de Ação</b> do iPhone 15 Pro/16, ou diga “E aí Siri, Anjo SOS”).</p>
-    <p>Na versão web, a transmissão só continua com esta página na tela. O app nativo vai funcionar em segundo plano.</p>
-  </details>
-  <p class="nota" style="color:#22c55e">Versão da página: <b id="versaoPag"></b> · atualiza sozinha</p>
-  <p class="nota">Versão web para iPhone enquanto o app nativo não é instalado. Mantenha esta tela aberta: o iPhone
-    pausa a câmera de páginas web quando outro app é aberto ou a tela bloqueia.</p>
+
+  <!-- ===== Aba Passeio: o mapa é o protagonista ===== -->
+  <section id="abaPasseio" class="aba">
+    <div class="rota">
+      <div class="campo"><input id="rotaPara" placeholder="🔎 Para onde?" autocomplete="off"><button class="mic" id="micPara" title="Falar o destino">🎤</button><div class="sugestoes" id="sugPara"></div></div>
+      <div id="rotaMais" style="display:none">
+        <select id="rotaModo"><option value="foot">🚶 A pé</option><option value="bike">🚲 Bike</option><option value="car">🚗 Carro</option></select>
+        <div class="campo"><input id="rotaDe" placeholder="Origem (vazio = minha localização)" autocomplete="off"><button class="mic" id="micDe" title="Falar a origem">🎤</button><div class="sugestoes" id="sugDe"></div></div>
+        <div class="linha"><button id="btMapaDe">📍 Origem no mapa</button><button id="btMapaPara">📍 Destino no mapa</button></div>
+      </div>
+      <div class="linha" id="rotaBotoes"><button id="btRota" class="verde">🧭 Traçar rota</button><button id="btOpcRota" class="pequeno">🚶 Opções</button><button id="btLimparRota" class="pequeno">Limpar</button></div>
+      <div id="rotaInfo" class="sub"></div>
+    </div>
+    <div id="mapaCaixa">
+      <div id="mapa"></div>
+      <div id="tela"><video id="video" autoplay playsinline muted></video><canvas id="caixas"></canvas><div class="oculta">📷 oculta · 2 toques mostram</div></div>
+    </div>
+    <div id="frente" class="frente neutro">Toque em ▶ Iniciar para o anjo acompanhar o seu passeio</div>
+    <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
+    <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
+    <div class="linha"><button id="btModo">📷 Com câmera</button><button id="btGravar">⏺ Gravar</button><button id="btCam" class="pequeno">🔄</button></div>
+  </section>
+
+  <!-- ===== Aba Histórico ===== -->
+  <section id="abaHistorico" class="aba" style="display:none">
+    <h2>Hoje</h2>
+    <div id="histResumo" class="cartao sub"></div>
+    <h2>Alertas recebidos</h2>
+    <div id="histLista"><div class="sub">Nenhum alerta hoje.</div></div>
+  </section>
+
+  <!-- ===== Aba Ajustes: tudo o que se configura uma vez ===== -->
+  <section id="abaAjustes" class="aba" style="display:none">
+    <h2>Ajustes</h2>
+    <div class="sub" id="validade"></div>
+    <div class="cartao">
+      <b>Voz do anjo</b>
+      <button id="btAudio">🔊 Áudio: alertas e resumo</button>
+      <button id="btDiscreto">🙈 Modo discreto</button>
+    </div>
+    <div class="cartao">
+      <b>🆘 Pedir socorro</b>
+      <button id="btSacudir">📳 SOS ao sacudir: ligado</button>
+      <div id="caixaSenha" style="margin-top:10px">
+        <div><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
+        <div class="sub" style="margin:4px 0">3 a 6 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular, aciona o SOS em silêncio.</div>
+        <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada">
+        <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer" class="pequeno">👁</button></div>
+        <button id="btOuvir">🎙 Ouvir a senha com a transmissão parada: desligado</button>
+        <div id="ouvirInfo" class="sub"></div>
+      </div>
+      <details class="nota"><summary>Como pedir socorro sem abrir a tela (iPhone)</summary>
+        <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
+        o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
+        <p><b>Como acionar:</b> sacudir o celular com força, 5 vezes em até 3 segundos, com esta página aberta,
+        ou falar a senha. Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
+        <p><b>Criar o atalho:</b> app Atalhos → + → Adicionar ação → “Abrir URL” → cole o link → nomeie “Anjo SOS”.
+        Depois ligue-o a um gesto: Ajustes → Acessibilidade → Toque → <b>Toque Traseiro</b> → Toque triplo → “Anjo SOS”
+        (ou no <b>Botão de Ação</b> do iPhone 15 Pro/16, ou diga “E aí Siri, Anjo SOS”).</p>
+      </details>
+    </div>
+    <div class="cartao">
+      <b>Este celular</b>
+      <button id="btDesparear">Desparear</button>
+      <p class="nota" style="color:#22c55e">Versão da página: <b id="versaoPag"></b> · atualiza sozinha</p>
+      <p class="nota">Versão web enquanto o app nativo não é instalado. Mantenha esta tela aberta: o iPhone
+        pausa a câmera de páginas web quando outro app é aberto ou a tela bloqueia.</p>
+    </div>
+  </section>
+
+  <nav id="abas">
+    <button data-aba="abaPasseio" class="sel"><span>🧭</span>Passeio</button>
+    <button data-aba="abaHistorico"><span>🕘</span>Histórico</button>
+    <button data-aba="abaAjustes"><span>⚙</span>Ajustes</button>
+  </nav>
 </div>
 
 <script>
-const VERSAO_PAGINA = "C38";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C39";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -133,6 +208,7 @@ const PLURAL = { person:"pessoas", bicycle:"bicicletas", car:"carros", motorcycl
 const ATENCAO = new Set(["FORA DA ROTA","PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"]);
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
              set(k, v) { try { localStorage.setItem(k, v); } catch {} }, del(k) { try { localStorage.removeItem(k); } catch {} } };
+let soPosicao = ls.get("anjo.soPosicao") === "1", ultimoAlerta = null;   // modo só posição (C39) e último alerta (faixa "à frente")
 
 /* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
 function lerFragmento() {
@@ -672,7 +748,7 @@ function enviar(msg, confiavel = true) {
   if (!room || room.state !== "connected") return;
   room.localParticipant.publishData(cod.encode(JSON.stringify(msg)), { reliable: confiavel, topic: "anjo", destinationIdentities: [CENTRAL] }).catch(() => {});
 }
-function botaoGravar() { $("btGravar").textContent = gravar ? "⏺ Gravando na central" : "⏺ Gravar na central"; $("btGravar").className = gravar ? "vermelho" : ""; }
+function botaoGravar() { $("btGravar").textContent = gravar ? "⏺ Gravando" : "⏺ Gravar"; $("btGravar").className = gravar ? "vermelho" : ""; }
 botaoGravar();
 
 async function conectar() {
@@ -709,10 +785,11 @@ async function conectar() {
       });
   try {
     await room.connect(par.url, par.token);
-    await room.localParticipant.setCameraEnabled(true);
-    await room.localParticipant.setMicrophoneEnabled(true);
+    if (!soPosicao || sosAtivo) await room.localParticipant.setCameraEnabled(true);
+    await room.localParticipant.setMicrophoneEnabled(true);   // microfone SEMPRE aberto (regra do SOS)
     const pub = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
+    enviar({ tipo:"modo", so_posicao: soPosicao && !sosAtivo });
     enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
     if (sosAtivo) enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" });
     if (ls.get("anjo.senhaPendente") === "1" && ls.get("anjo.fraseLocal")) {   // senha salva com a transmissão parada: leva à central
@@ -739,7 +816,7 @@ async function iniciar(silencioso = false) {
     if (p.coords.accuracy > 35) return;
     velocidade = Math.max(0, p.coords.speed || 0);
     const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
-    enviar(g); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h`;
+    enviar(g); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); if (!sosAtivo) somarPercurso(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h ·`;
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
 }
 async function parar() {
@@ -765,12 +842,16 @@ async function dispararSos(motivo) {
   discreto(true);
   if (!ja) console.log("SOS:", motivo);
   if (!ativo) { frontal = true; await iniciar(true); }
+  else if (soPosicao && room && !room.localParticipant.isCameraEnabled) {   // só posição: o SOS liga a câmera da frente
+    frontal = true; await ligarCamera(true); enviar({ tipo:"modo", so_posicao:false });
+  }
   else if (!frontal) await trocarCamera(true);   // já transmitindo: passa para a câmera da frente
   const avisar = () => { enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" }); marcaSos(); };
   clearInterval(sosRep); sosRep = setInterval(avisar, 5000); avisar();
 }
 function fimSos() {
   discreto(false);
+  if (soPosicao && room && room.localParticipant.isCameraEnabled) { ligarCamera(false); enviar({ tipo:"modo", so_posicao:true }); }
   if (ativo) { $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho"; }   // desfaz o "parado" de fachada
   sosAtivo = false; ls.del("anjo.sos"); ls.del("anjo.sosMotivo"); clearInterval(sosRep); sosRep = null; marcaSos();
 }
@@ -1008,6 +1089,7 @@ function mostrarAlerta(m) {
   el.textContent = "ALERTA" + (m.virtual ? " · " + m.virtual : "") + ": " + m.alertas.join(" | ") + (m.cam !== par.nome ? ` (${m.cam})` : "");
   el.style.background = m.alertas.every(a => ATENCAO.has(a)) ? "#a16207" : "#dc2626";
   el.style.display = "block"; alertaAte = Date.now() + 8000; alertaNoMapa(m);
+  ultimoAlerta = { ...m, recebido: Date.now() }; guardarHistorico(m);
   m.falas.forEach((f, i) => falar(f, m.grave ? 1 : 2, m.alertas[i] || f, 10000));
   if (m.grave && navigator.vibrate) navigator.vibrate([300, 100, 300]);
 }
@@ -1015,8 +1097,8 @@ function mostrarAlerta(m) {
 /* ---------- indicador e caixas ---------- */
 setInterval(() => {
   const recente = ack && Date.now() - ackT < 3500;
-  const [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", emEspera ? "Transmissão parada — a central pode reiniciar com 🔄 Reconectar" : "Transmissão parada"])
-    : recente && ack.recebendo ? ["ok", `● Central recebendo — ${ack.fps} fps · IA ${ack.ia_fps}/s${ack.virtual ? " · 📷 " + ack.virtual : ""}${ack.gravando ? " · ⏺ gravando" : ""}`]
+  const [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", emEspera ? "Parado · a central pode reconectar" : "Parado"])
+    : recente && (ack.recebendo || soPosicao) ? ["ok", `● Protegido · central ok${ack.gravando ? " · ⏺ gravando" : ""}`]
     : recente ? ["warn", "● Central conectada, mas sem imagem"]
     : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
   if (sosAtivo) {   // SOS: o celular não mostra nada; só a central sabe
@@ -1031,10 +1113,12 @@ setInterval(() => {
   }
   ultimoLink = cls;
   const c = recente ? ack.contagem : {};
-  $("cont").textContent = (Object.entries(c).map(([k, v]) => `${NOMES[k] || k}: ${v}`).join(" · ") || (ativo ? "Nenhum objeto" : ""))
+  $("cont").textContent = (recente && !soPosicao ? `${ack.fps} fps · IA ${ack.ia_fps}/s${ack.virtual ? " · 📷 " + ack.virtual : ""} · ` : recente && ack.virtual ? "📷 " + ack.virtual + " · " : "")
+    + (Object.entries(c).map(([k, v]) => `${NOMES[k] || k}: ${v}`).join(" · ") || (ativo && !soPosicao ? "Nenhum objeto" : ""))
     + (recente && ack.virtual && ack.unicos_trecho ? `  ·  no trecho ${ack.virtual}: ${ack.unicos_trecho.person || 0} pessoas, `
         + `${["car","motorcycle","bus","truck"].reduce((n, k) => n + (ack.unicos_trecho[k] || 0), 0)} veículos` : "");
   if (Date.now() > alertaAte) $("alerta").style.display = "none";
+  faixaFrente(cls);
 }, 1000);
 
 function desenhar() {
@@ -1075,6 +1159,112 @@ $("btAtualizar").onclick = async () => { await parar(); recarregar(); };
 setInterval(conferirVersao, 60000);
 setTimeout(conferirVersao, 5000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") conferirVersao(); });
+
+
+/* ---------- tela limpa (C39): abas, faixa "à frente", histórico e modo só posição ---------- */
+function abrirAba(id) {
+  document.querySelectorAll(".aba").forEach(a => a.style.display = a.id === id ? "" : "none");
+  document.querySelectorAll("#abas button").forEach(b => b.classList.toggle("sel", b.dataset.aba === id));
+  if (id === "abaPasseio" && mapa) setTimeout(() => mapa.invalidateSize(), 50);
+  if (id === "abaHistorico") desenharHistorico();
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll("#abas button").forEach(b => b.onclick = () => abrirAba(b.dataset.aba));
+$("btEngrenagem").onclick = () => abrirAba($("abaAjustes").style.display === "none" ? "abaAjustes" : "abaPasseio");
+// origem, modo (a pé/bike/carro) e marcar no mapa ficam escondidos até o usuário pedir
+const EMOJI_MODO = { foot: "🚶", bike: "🚲", car: "🚗" };
+function rotuloOpcoes() { $("btOpcRota").textContent = EMOJI_MODO[$("rotaModo").value] + ($("rotaMais").style.display === "none" ? " Opções" : " Fechar"); }
+$("btOpcRota").onclick = () => { $("rotaMais").style.display = $("rotaMais").style.display === "none" ? "" : "none"; rotuloOpcoes(); };
+$("rotaModo").addEventListener("change", rotuloOpcoes);
+rotuloOpcoes();
+// os botões da rota só aparecem quando há destino digitado, rota traçada ou opções abertas
+function botoesRota() {
+  const mostra = $("rotaPara").value.trim() || rota || $("rotaMais").style.display !== "none" || document.activeElement === $("rotaPara");
+  $("rotaBotoes").style.display = mostra ? "" : "none";
+}
+["input", "focus", "blur"].forEach(ev => $("rotaPara").addEventListener(ev, () => setTimeout(botoesRota, ev === "blur" ? 200 : 0)));
+setInterval(botoesRota, 1000); botoesRota();
+
+// Faixa "à frente": resume em uma linha o que importa agora
+function faixaFrente(cls) {
+  const f = $("frente"); let tipo = "neutro", txt;
+  const pos = eu ? eu.getLatLng() : null;
+  const dist = p => pos && p && p.lat != null ? Math.round(L.latLng(p.lat, p.lng).distanceTo(pos)) : null;
+  const pinoPerto = pos ? pinosAlerta.map(p => ({ p, d: Math.round(p.ll.distanceTo(pos)) })).filter(x => x.d < 250).sort((a, b) => a.d - b.d)[0] : null;
+  if (!ativo) {
+    txt = rota ? `Rota pronta: ${textoDist(rota.distancia)}, cerca de ${Math.max(1, Math.round(rota.duracao / 60))} min · toque em ▶ Iniciar`
+               : "Toque em ▶ Iniciar para o anjo acompanhar o seu passeio";
+  } else if (ultimoAlerta && Date.now() - ultimoAlerta.recebido < 60000) {
+    const d = dist(ultimoAlerta.pos);
+    tipo = ultimoAlerta.grave ? "perigo" : "atencao";
+    txt = `⚠ ${ultimoAlerta.alertas.join(", ").toLowerCase()}${d != null ? ` · a ${d} m` : ""}`;
+  } else if (pinoPerto) {
+    tipo = pinoPerto.p.grave ? "perigo" : "atencao";
+    txt = `Atenção: alerta registrado a ${pinoPerto.d} m (${pinoPerto.p.linhas.length}×)`;
+  } else if (cls === "ok") {
+    tipo = "calmo";
+    const segura = rota && opcoesRota.length > 1 && opcoesRota.some(o => o.risco) && rota.escolhida === indiceMaisSegura();
+    txt = "Trecho tranquilo" + (segura ? " · 🛡 rota mais segura" : "") + (soPosicao ? " · 📍 só posição" : "");
+    if (rota && pos) { const falta = pos.distanceTo([rota.destino.lat, rota.destino.lng]); txt += ` · faltam ${textoDist(falta)}`; }
+  } else {
+    tipo = "atencao"; txt = "Sem contato com a central — tentando de novo";
+  }
+  f.className = "frente " + tipo; f.textContent = txt;
+}
+
+// Histórico do dia (guardado só neste celular)
+const hoje = () => new Date().toLocaleDateString("pt-BR");
+let historico = (() => { try { const h = JSON.parse(ls.get("anjo.hist") || "null"); return h && h.dia === hoje() ? h : null; } catch { return null; } })()
+  || { dia: hoje(), alertas: [], inicio: null, metros: 0 };
+function salvarHist() { if (historico.dia !== hoje()) historico = { dia: hoje(), alertas: [], inicio: null, metros: 0 }; ls.set("anjo.hist", JSON.stringify(historico)); }
+function guardarHistorico(m) {
+  if (sosAtivo) return;
+  historico.alertas.unshift({ t: m.t || Date.now(), alertas: m.alertas, virtual: m.virtual || "", grave: !!m.grave, pos: m.pos || null });
+  historico.alertas = historico.alertas.slice(0, 100); salvarHist();
+}
+let ultimoPonto = null;
+function somarPercurso(lat, lng) {
+  const p = L.latLng(lat, lng);
+  if (!historico.inicio) historico.inicio = Date.now();
+  if (ultimoPonto) { const d = ultimoPonto.distanceTo(p); if (d > 3 && d < 500) historico.metros += d; }
+  ultimoPonto = p; salvarHist();
+}
+function desenharHistorico() {
+  $("histResumo").textContent = historico.inicio
+    ? `Protegido desde ${new Date(historico.inicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} · ${textoDist(historico.metros)} percorridos · ${historico.alertas.length} alerta(s)`
+    : "Nenhum passeio hoje ainda.";
+  const l = $("histLista"); l.innerHTML = "";
+  if (!historico.alertas.length) { l.innerHTML = '<div class="sub">Nenhum alerta hoje.</div>'; return; }
+  historico.alertas.forEach(a => {
+    const el = document.createElement("div"); el.className = "hist" + (a.grave ? " grave" : "");
+    el.innerHTML = "<b></b><small></small>";
+    el.querySelector("b").textContent = a.alertas.join(", ");
+    el.querySelector("small").textContent = new Date(a.t).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + (a.virtual ? " · 📷 " + a.virtual : "") + (a.pos ? " · ver no mapa" : "");
+    if (a.pos) el.onclick = () => { abrirAba("abaPasseio"); seguir = false; ultimoToque = Date.now(); mapa.setView([a.pos.lat, a.pos.lng], 17); };
+    l.appendChild(el);
+  });
+}
+
+// Modo só posição: sem câmera (economiza bateria e dados); GPS e microfone continuam.
+// Em SOS a câmera liga mesmo assim, e o microfone fica sempre aberto.
+async function ligarCamera(lig) {
+  if (!room || room.state !== "connected") return;
+  try {
+    await room.localParticipant.setCameraEnabled(lig, lig ? { facingMode: frontal ? "user" : "environment", resolution: LivekitClient.VideoPresets.h540.resolution } : undefined);
+    const p = room.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
+    if (lig && p && p.videoTrack) p.videoTrack.attach($("video"));
+  } catch (e) { console.log("camera", e); }
+}
+function botaoModo() {
+  $("btModo").textContent = soPosicao ? "📍 Só posição" : "📷 Com câmera";
+  document.body.classList.toggle("soPosicao", soPosicao);
+  $("btCam").style.display = soPosicao ? "none" : "";
+}
+$("btModo").onclick = async () => {
+  soPosicao = !soPosicao; ls.set("anjo.soPosicao", soPosicao ? "1" : "0"); botaoModo();
+  if (ativo && !sosAtivo) { await ligarCamera(!soPosicao); enviar({ tipo:"modo", so_posicao: soPosicao }); }
+};
+botaoModo();
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
