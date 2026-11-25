@@ -167,10 +167,10 @@
       <button id="btSacudir">📳 SOS ao sacudir: ligado</button>
       <div id="caixaSenha" style="margin-top:10px">
         <div><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
-        <div class="sub" style="margin:4px 0">3 a 6 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Falada perto do celular, aciona o SOS em silêncio.</div>
+        <div class="sub" style="margin:4px 0">3 a 6 palavras incomuns, que ninguém diria por acaso (ex.: “anjo cadê o guarda-chuva azul”). Com a orelha verde, falada perto do celular, aciona o SOS em silêncio: parado, quem ouve é o celular; transmitindo, a central.</div>
         <input id="senhaFrase" type="password" autocomplete="off" placeholder="Digite a senha falada">
         <div class="linha"><button id="btSenha">Salvar senha</button><button id="btSenhaApagar">Apagar</button><button id="btSenhaVer" class="pequeno">👁</button></div>
-        <button id="btOuvir" class="ouvir">Ouvir a senha com a transmissão parada</button>
+        <button id="btOuvir" class="ouvir">Ouvindo</button>
         <div id="ouvirInfo" class="sub"></div>
       </div>
       <details class="nota"><summary>Como pedir socorro sem abrir a tela (iPhone)</summary>
@@ -200,7 +200,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C40";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C41";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -793,6 +793,7 @@ async function conectar() {
     const pub = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
     enviar({ tipo:"modo", so_posicao: soPosicao && !sosAtivo });
+    enviar({ tipo:"ouvir", ligado: ouvirLocal });
     enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
     if (sosAtivo) enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" });
     if (ls.get("anjo.senhaPendente") === "1" && ls.get("anjo.fraseLocal")) {   // senha salva com a transmissão parada: leva à central
@@ -871,7 +872,7 @@ function fimSos() {
 // Com a transmissão ligada, quem escuta é a central (áudio da transmissão).
 let fraseEnviada = null, rec = null, ouvindoLocal = false, wakeEscuta = null, reinicios = 0;
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let ouvirLocal = ls.get("anjo.ouvirLocal") === "1";
+let ouvirLocal = ls.get("anjo.ouvirLocal") !== "0";   // padrão: ouvindo ativado
 function normalizar(t) { return (t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z ]+/g, " ").split(/\s+/).filter(Boolean); }
 function bateFrase(texto, frase) {           // todas as palavras, na ordem, numa janela curta (igual ao servidor)
   const alvo = normalizar(frase), ouv = normalizar(texto);
@@ -890,7 +891,7 @@ function botaoOuvir() {
   const x = ouvirLocal ? "" : '<line x1="3" y1="3" x2="21" y2="21" stroke="#ef4444" stroke-width="2.6"/><line x1="21" y1="3" x2="3" y2="21" stroke="#ef4444" stroke-width="2.6"/>';
   $("btOuvir").innerHTML = `<svg viewBox="0 0 24 24" width="50" height="50" style="flex:none" fill="none" stroke="${ouvirLocal ? "#22c55e" : "#94a3b8"}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
     + '<path d="M6 9a6 6 0 1 1 12 0c0 3.2-2.2 4.4-3.4 6.1-.9 1.3-1 2.4-1.6 3.4A3 3 0 0 1 8 17"/><path d="M9.5 9.2a2.5 2.5 0 1 1 5 0c0 1.6-2 2.2-2 3.8"/>'
-    + x + `</svg><span>Ouvir a senha com a transmissão parada<br><small>${ouvirLocal ? "ligado" : "desligado"}</small></span>`;
+    + x + `</svg><span>${ouvirLocal ? "Ouvindo ativado" : "Ouvindo desativado"}<br><small>${ouvirLocal ? "a senha falada aciona o SOS, transmitindo ou não" : "a senha falada não aciona o SOS"}</small></span>`;
   $("btOuvir").classList.toggle("ligado", ouvirLocal);
   if (!SR) infoOuvir("Este navegador não tem reconhecimento de voz.");
   else if (ouvirLocal && !ls.get("anjo.fraseLocal")) infoOuvir("Salve a senha de novo (uma vez) para guardá-la também neste celular.");
@@ -934,11 +935,13 @@ async function escutaLocal() {
   };
   try { r.start(); } catch (e) { ouvindoLocal = false; rec = null; infoOuvir("Não consegui ligar o microfone: toque no botão 🎙."); }
 }
+// Orelha: "Ouvindo ativado/desativado" vale nos dois casos. Parado, quem ouve é o celular; transmitindo, a central.
 $("btOuvir").onclick = () => {
-  if (!SR) { botaoOuvir(); return; }
-  if (ouvirLocal && ouvindoLocal) { ouvirLocal = false; ls.set("anjo.ouvirLocal", "0"); pararEscutaLocal(); botaoOuvir(); return; }
-  ouvirLocal = true; ls.set("anjo.ouvirLocal", "1"); botaoOuvir();
-  pararEscutaLocal(); escutaLocal();         // no iPhone o 1º início precisa vir de um toque
+  const precisaToque = ouvirLocal && !ativo && !sosAtivo && SR && !ouvindoLocal && ls.get("anjo.fraseLocal");
+  if (precisaToque) { escutaLocal(); return; }   // iPhone: o 1º início da escuta precisa de um toque (não desliga)
+  ouvirLocal = !ouvirLocal; ls.set("anjo.ouvirLocal", ouvirLocal ? "1" : "0"); botaoOuvir();
+  enviar({ tipo: "ouvir", ligado: ouvirLocal });
+  pararEscutaLocal(); if (ouvirLocal) escutaLocal();
 };
 botaoOuvir();
 setTimeout(() => { if (!ativo) escutaLocal(); }, 1500);   // página aberta e parada: tenta já ouvir (o iPhone pode pedir um toque)
