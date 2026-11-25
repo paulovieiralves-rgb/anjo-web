@@ -103,7 +103,7 @@
   #abas button span { display:block; font-size:20px; }
   #abas button.sel { color:#fff; }
   body.discreto #tela, body.discreto #cont, body.discreto #mapaCaixa, body.discreto .rota, body.discreto #alerta,
-  body.discreto #frente, body.discreto #histLista, body.discreto .tecnico { display:none !important; }
+  body.discreto #frente, body.discreto #histLista, body.discreto .tecnico, body.discreto #autoInfo { display:none !important; }
 </style>
 </head>
 <body>
@@ -164,7 +164,8 @@
     </div>
     <div class="cartao">
       <b>🆘 Pedir socorro</b>
-      <button id="btSacudir">📳 SOS ao sacudir: ligado</button>
+      <button id="btSacudir">📳 SOS automático: ligado</button>
+      <div id="autoInfo" class="sub" style="margin-top:4px"></div>
       <div id="caixaSenha" style="margin-top:10px">
         <div class="linha" style="align-items:center"><div style="flex:1"><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
           <button id="btSenhaMudar" class="pequeno" style="display:none;margin-top:0">Mudar senha</button></div>
@@ -179,8 +180,9 @@
       <details class="nota"><summary>Como pedir socorro sem abrir a tela (iPhone)</summary>
         <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
         o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
-        <p><b>Como acionar:</b> sacudir o celular com força, 5 vezes em até 3 segundos, com esta página aberta,
-        ou falar a senha. Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
+        <p><b>Como acionar:</b> é automático, com esta página aberta: <b>grito + tranco</b> no celular (a menos de 5 s um do outro;
+        o grito só é percebido transmitindo) ou <b>tranco + fuga</b> (o celular arrancado e levado correndo ou de moto).
+        Também: falar a senha, ou sacudir com força 5 vezes em 3 s. Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
         <p><b>Criar o atalho:</b> app Atalhos → + → Adicionar ação → “Abrir URL” → cole o link → nomeie “Anjo SOS”.
         Depois ligue-o a um gesto: Ajustes → Acessibilidade → Toque → <b>Toque Traseiro</b> → Toque triplo → “Anjo SOS”
         (ou no <b>Botão de Ação</b> do iPhone 15 Pro/16, ou diga “E aí Siri, Anjo SOS”).</p>
@@ -203,7 +205,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C42";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C43";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -797,6 +799,8 @@ async function conectar() {
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
     enviar({ tipo:"modo", so_posicao: soPosicao && !sosAtivo });
     enviar({ tipo:"ouvir", ligado: ouvirLocal });
+    const mic = room.localParticipant.getTrackPublication(R.Track.Source.Microphone);
+    ligarGrito(mic && mic.audioTrack && mic.audioTrack.mediaStreamTrack);
     enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
     if (sosAtivo) enviar({ tipo:"sos", ativo:true, motivo: ls.get("anjo.sosMotivo") || "" });
     if (ls.get("anjo.senhaPendente") === "1" && ls.get("anjo.fraseLocal")) {   // senha salva com a transmissão parada: leva à central
@@ -811,6 +815,7 @@ async function conectar() {
 }
 
 async function iniciar(silencioso = false) {
+  vigiarGps(false); prepararAudio();
   pararEscutaLocal();                 // transmitindo: quem ouve a senha é a central
   await sairEspera();
   avisoCentral = "";
@@ -821,7 +826,7 @@ async function iniciar(silencioso = false) {
   hb = setInterval(() => enviar({ tipo:"hb" }, false), 1000);
   if (navigator.geolocation) gpsWatch = navigator.geolocation.watchPosition(p => {
     if (p.coords.accuracy > 35) return;
-    velocidade = Math.max(0, p.coords.speed || 0);
+    velocidade = Math.max(0, p.coords.speed || 0); registrarVelocidade(velocidade);
     const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
     enviar(g); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); if (!sosAtivo) somarPercurso(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h ·`;
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
@@ -831,6 +836,7 @@ async function parar() {
   clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
   try { await wakeLock?.release(); } catch {} wakeLock = null;
   await room?.disconnect(); room = null; ack = null; dets = null;
+  analisador = null; vigiarGps(true);
   escutaLocal();                      // parado: o próprio celular passa a ouvir a senha
 }
 // a tela volta a ficar ligada quando o usuário retorna à página
@@ -1007,12 +1013,12 @@ let sacudir = ls.get("anjo.sacudir") !== "0", picos = [];
 let sensor = "?", ultimaLeitura = 0, maiorG = 0;
 function botaoSacudir() {
   const info = !sacudir ? "" : sensor === "ok" ? " ✓" : sensor === "negado" ? " — sensor bloqueado" : " — toque aqui para liberar o sensor";
-  $("btSacudir").textContent = "📳 SOS ao sacudir: " + (sacudir ? "ligado" : "desligado") + info;
+  $("btSacudir").textContent = "📳 SOS automático (grito ou fuga + tranco): " + (sacudir ? "ligado" : "desligado") + info;
 }
 botaoSacudir();
 $("btSacudir").onclick = () => {
   if (sacudir && sensor !== "ok") { pedirSensores(); return; }   // 1º toque libera o sensor; depois liga/desliga
-  sacudir = !sacudir; ls.set("anjo.sacudir", sacudir ? "1" : "0"); botaoSacudir();
+  sacudir = !sacudir; ls.set("anjo.sacudir", sacudir ? "1" : "0"); botaoSacudir(); vigiarGps(sacudir && !ativo);
 };
 // iPhone: a permissão do sensor de movimento só pode ser pedida DIRETO num toque (antes de qualquer await)
 function pedirSensores() {
@@ -1020,7 +1026,7 @@ function pedirSensores() {
     if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === "function") {
       DeviceMotionEvent.requestPermission().then(r => {
         if (r !== "granted") { sensor = "negado"; botaoSacudir();
-          alert("O sensor de movimento foi negado. Para o SOS ao sacudir funcionar: feche o Safari por completo, abra esta página de novo e toque em Permitir quando o iPhone perguntar."); }
+          alert("O sensor de movimento foi negado. Para o SOS automático funcionar: feche o Safari por completo, abra esta página de novo e toque em Permitir quando o iPhone perguntar."); }
       }).catch(() => {});
     }
   } catch {}
@@ -1033,11 +1039,80 @@ window.addEventListener("devicemotion", ev => {
   const g = Math.hypot(a.x, a.y, a.z);   // em repouso ≈ 9,8
   if (g > maiorG) maiorG = g;
   // pico forte: > 2 g (andar fica perto de 1,3 g); 5 picos em 3 s disparam o SOS
+  if (g > LIM_TRANCO && agora - ultimoTranco > 1500) registrarTranco(g, agora);   // tranco forte e único (C43)
   if (g > 20 && (!picos.length || agora - picos[picos.length - 1] > 120)) {
     picos = picos.filter(t => agora - t < 3000); picos.push(agora);
     if (picos.length >= 5) { picos = []; dispararSos("sacudir"); }
   }
 });
+
+
+/* ---------- SOS automático (C43): grito + tranco, ou tranco + fuga ----------
+   Num roubo a vítima não tem como fazer gesto combinado. O celular reconhece sozinho:
+   - tranco: um pico forte e único de aceleração (celular arrancado, batido);
+   - grito: som muito alto e agudo por ~0,4 s (analisado NO celular, no microfone da transmissão);
+   - fuga: logo depois do tranco, a velocidade salta de parado/andando para corrida ou moto.
+   Grito + tranco a menos de 5 s, ou tranco + fuga em até 12 s, disparam o SOS discreto;
+   a central recebe como "possível roubo" e confirma pelo vídeo e áudio. Cada sinal sozinho não dispara. */
+const LIM_TRANCO = 25;          // m/s² (≈ 2,5 g; andar ≈ 1,3 g)
+const LIM_GRITO_DB = -14;       // dBFS (volume muito alto)
+const LIM_GRITO_HZ = 1000;      // centro do espectro (grito é agudo)
+let ultimoTranco = 0, trancoG = 0, velAntes = 0, ultimoGrito = 0, maxDb = -99, maxDbT = 0, velHist = [];
+let ctxAudio = null, analisador = null, gritoMs = [], gpsVigia = null;
+function registrarTranco(g, agora) {
+  ultimoTranco = agora; trancoG = g / 9.81;
+  const antes = velHist.filter(x => agora - x.t < 10000).map(x => x.v);
+  velAntes = antes.length ? antes.reduce((a, b) => a + b, 0) / antes.length : 0;
+}
+function registrarVelocidade(v) { const t = Date.now(); velHist.push({ t, v: Math.max(0, v || 0) }); velHist = velHist.filter(x => t - x.t < 30000); }
+function prepararAudio() {      // iPhone: o áudio da página só liga dentro de um toque
+  try { if (!ctxAudio) ctxAudio = new (window.AudioContext || window.webkitAudioContext)(); ctxAudio.resume(); } catch {}
+}
+function ligarGrito(mediaTrack) {
+  try {
+    if (!mediaTrack) return;
+    prepararAudio(); if (!ctxAudio) return;
+    const fonte = ctxAudio.createMediaStreamSource(new MediaStream([mediaTrack]));
+    analisador = ctxAudio.createAnalyser(); analisador.fftSize = 2048; fonte.connect(analisador);
+  } catch (e) { console.log("grito", e); analisador = null; }
+}
+const bufT = new Float32Array(2048), bufF = new Uint8Array(1024);
+setInterval(() => {               // análise do som a cada 100 ms
+  if (!analisador || !ativo) return;
+  analisador.getFloatTimeDomainData(bufT);
+  let soma = 0; for (const x of bufT) soma += x * x;
+  const db = 10 * Math.log10(soma / bufT.length + 1e-12);
+  analisador.getByteFrequencyData(bufF);
+  let num = 0, den = 0; const hzPorBin = (ctxAudio ? ctxAudio.sampleRate : 48000) / 2048;
+  for (let i = 2; i < bufF.length; i++) { num += i * hzPorBin * bufF[i]; den += bufF[i]; }
+  const centro = den ? num / den : 0, agora = Date.now();
+  if (db > maxDb || agora - maxDbT > 3000) { maxDb = db; maxDbT = agora; }
+  gritoMs = gritoMs.filter(t => agora - t < 1200);
+  if (db > LIM_GRITO_DB && centro > LIM_GRITO_HZ) { gritoMs.push(agora); if (gritoMs.length >= 4) ultimoGrito = agora; }
+}, 100);
+setInterval(() => {               // combinações que disparam o SOS
+  const agora = Date.now();
+  if (sacudir && !sosAtivo && par) {
+    if (ultimoTranco && ultimoGrito && agora - ultimoTranco < 6000 && Math.abs(ultimoGrito - ultimoTranco) < 5000) {
+      ultimoTranco = ultimoGrito = 0; dispararSos("automático: grito + tranco");
+    } else if (ultimoTranco && agora - ultimoTranco < 12000 && velAntes < 2) {
+      const depois = velHist.filter(x => x.t > ultimoTranco).map(x => x.v);
+      if (depois.some(v => v > 3.5)) { ultimoTranco = 0; dispararSos("automático: tranco + fuga"); }
+    }
+  }
+  if (sosAtivo || !sacudir) { $("autoInfo").textContent = ""; return; }
+  const ha = t => t ? `há ${Math.round((agora - t) / 1000)} s` : "—";
+  $("autoInfo").textContent = `Teste: tranco ${ultimoTranco ? trancoG.toFixed(1).replace(".", ",") + " g " + ha(ultimoTranco) : "—"} · `
+    + (ativo && analisador ? `som ${Math.round(maxDb)} dB${agora - ultimoGrito < 6000 ? " · grito ✓" : ""}` : "grito: só transmitindo")
+    + ` · ${(velHist.length ? velHist[velHist.length - 1].v * 3.6 : 0).toFixed(0)} km/h`;
+}, 500);
+// parado: GPS leve só para perceber a fuga (transmitindo, o GPS da transmissão faz isso)
+function vigiarGps(lig) {
+  if (lig && gpsVigia === null && navigator.geolocation && sacudir && par)
+    gpsVigia = navigator.geolocation.watchPosition(p => registrarVelocidade(p.coords.speed), () => {}, { enableHighAccuracy: true, maximumAge: 2000 });
+  else if (!lig && gpsVigia !== null) { navigator.geolocation.clearWatch(gpsVigia); gpsVigia = null; }
+}
+setTimeout(() => { if (!ativo) vigiarGps(true); }, 2000);
 
 // A central pode desconectar (ou bloquear) este celular: para tudo e fica EM ESPERA,
 // conectado à sala só por dados (sem câmera, microfone nem GPS), até a central pedir a reconexão.
@@ -1293,7 +1368,7 @@ botaoModo();
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
-  pedirSensores();
+  pedirSensores(); prepararAudio();
   if (ativo && sosAtivo) { $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde"; return; }   // SOS: não para
   if (ativo) { await parar(); if (versaoNova) recarregar(); else setTimeout(entrarEspera, 1500); } else iniciar(); };
 $("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); };
