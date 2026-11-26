@@ -165,7 +165,7 @@
       <button id="btNovoPasseio">🧹 Novo passeio (limpa o mapa)</button>
     </div>
     <div class="cartao" id="abaHistorico">
-      <b>Histórico de hoje</b>
+      <b>Histórico deste passeio</b>
       <div id="histResumo" class="sub" style="margin:4px 0 8px"></div>
       <div id="histLista"><div class="sub">Nenhum alerta hoje.</div></div>
     </div>
@@ -215,7 +215,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C59";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C60";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -1387,6 +1387,14 @@ $("btNovoPasseio").onclick = () => {
   limparMapaLocal(); abrirAba("abaPasseio");
 };
 function limparMapaLocal() {
+  // C60: o histórico do passeio também é salvo (no celular, últimos 20 passeios; na central, na pasta do dia) e zera na tela
+  try {
+    if (historico.inicio || historico.alertas.length) {
+      const arq = JSON.parse(ls.get("anjo.histAnteriores") || "[]");
+      arq.unshift({ ...historico, fim: Date.now() }); ls.set("anjo.histAnteriores", JSON.stringify(arq.slice(0, 20)));
+    }
+    historico = { dia: hoje(), alertas: [], inicio: null, metros: 0 }; ultimoPonto = null; salvarHist(); desenharHistorico();
+  } catch {}
   try { percurso.length = 0; trilha && trilha.setLatLngs([]); } catch {}
   try { pinosAlerta.forEach(p => p.marcador && p.marcador.remove()); pinosAlerta.length = 0; } catch {}
   try { Object.values(camsVirtuais || {}).forEach(m => m.remove()); for (const k in camsVirtuais) delete camsVirtuais[k]; } catch {}
@@ -1453,9 +1461,9 @@ function somarPercurso(lat, lng) {
 function desenharHistorico() {
   $("histResumo").textContent = historico.inicio
     ? `Protegido desde ${new Date(historico.inicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} · ${textoDist(historico.metros)} percorridos · ${historico.alertas.length} alerta(s)`
-    : "Nenhum passeio hoje ainda.";
+    : "Passeio ainda não começou.";
   const l = $("histLista"); l.innerHTML = "";
-  if (!historico.alertas.length) { l.innerHTML = '<div class="sub">Nenhum alerta hoje.</div>'; return; }
+  if (!historico.alertas.length) { l.innerHTML = '<div class="sub">Nenhum alerta neste passeio.</div>'; return; }
   historico.alertas.forEach(a => {
     const el = document.createElement("div"); el.className = "hist" + (a.grave ? " grave" : "");
     el.innerHTML = "<b></b><small></small>";
