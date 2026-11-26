@@ -216,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C50";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C51";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -944,9 +944,21 @@ function parecida(a, b) {
   for (let i = 0; i < longa.length; i++) if (longa.slice(0, i) + longa.slice(i + 1) === curta) return true;
   return false;
 }
+// Senha com "pega"/"ladrão" (decisão do Paulo): vale qualquer variação do grito — "pega ladrão" uma vez,
+// "pega o/esse ladrão", "pega pega", "ladrão ladrão" (igual ao servidor)
+const MEIO_GRITO = new Set(["o","a","esse","essa","aquele","aquela","um","e"]);
+const PARES_GRITO = [["pega","ladrao"],["pega","pega"],["ladrao","ladrao"]];
+function gritoPegaLadrao(texto) {
+  const p = normalizar(texto);
+  for (let i = 0; i < p.length; i++) for (const j of [i + 1, i + 2]) {
+    if (j < p.length && (j === i + 1 || MEIO_GRITO.has(p[i + 1])) && PARES_GRITO.some(([a, b]) => parecida(p[i], a) && parecida(p[j], b))) return true;
+  }
+  return false;
+}
 function bateFrase(texto, frase) {
   const alvo = palavrasChave(frase), ouv = normalizar(texto);
   if (!alvo.length) return false;
+  if ((alvo.includes("pega") || alvo.includes("ladrao")) && gritoPegaLadrao(texto)) return true;
   const folga = alvo.length >= 3 ? 1 : 0;   // 3+ palavras-chave: aceita uma perdida
   for (let ini = 0; ini < ouv.length; ini++) for (let comeco = 0; comeco <= folga; comeco++) {
     if (!parecida(ouv[ini], alvo[comeco])) continue;
