@@ -201,7 +201,7 @@
     </div>
     <div class="cartao">
       <b>Este celular</b>
-      <button id="btDesparear">Desparear</button>
+      <button id="btDesparear" style="display:none">Desparear</button><!-- retirado da tela em 26/11 (Paulo): um toque sem querer apagava o pareamento; ler um QR novo substitui o anterior -->
       <p class="nota" style="color:#22c55e">Versão da página: <b id="versaoPag"></b> · atualiza sozinha</p>
       <p class="nota">Versão web enquanto o app nativo não é instalado. Mantenha esta tela aberta: o iPhone
         pausa a câmera de páginas web quando outro app é aberto ou a tela bloqueia.</p>
@@ -216,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C51";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C52";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
