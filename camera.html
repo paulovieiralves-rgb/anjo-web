@@ -216,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C49";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C50";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -1051,7 +1051,7 @@ $("btSenha").onclick = () => {
   const pal = normalizar(f);
   if (pal.length < 3) { statusSenha("— use pelo menos 3 palavras"); return; }
   if (pal.length > 6) { statusSenha("— use no máximo 6 palavras"); return; }
-  if (pal.some(w => ["socorro","ajuda","assalto","ladrao","policia"].includes(w))) { statusSenha("— evite socorro, ajuda, assalto, ladrão ou polícia"); return; }
+  if (pal.some(w => ["socorro","ajuda","assalto","policia"].includes(w))) { statusSenha("— evite socorro, ajuda, assalto ou polícia"); return; }   // "ladrão" liberado (decisão do Paulo: "pega ladrão" é o grito natural)
   ls.set("anjo.fraseLocal", f);                 // guardada já neste celular (escuta com a transmissão parada)
   if (!room || room.state !== "connected") {
     ls.set("anjo.senhaPendente", "1"); $("senhaFrase").value = "";
