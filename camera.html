@@ -216,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C48";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C49";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -947,7 +947,7 @@ function parecida(a, b) {
 function bateFrase(texto, frase) {
   const alvo = palavrasChave(frase), ouv = normalizar(texto);
   if (!alvo.length) return false;
-  const folga = alvo.length >= 4 ? 1 : 0;
+  const folga = alvo.length >= 3 ? 1 : 0;   // 3+ palavras-chave: aceita uma perdida
   for (let ini = 0; ini < ouv.length; ini++) for (let comeco = 0; comeco <= folga; comeco++) {
     if (!parecida(ouv[ini], alvo[comeco])) continue;
     let i = ini, j = comeco, perdidas = comeco;
@@ -956,7 +956,7 @@ function bateFrase(texto, frase) {
       else if (perdidas < folga && j + 1 < alvo.length && parecida(ouv[i], alvo[j + 1])) { perdidas++; j += 2; }
       i++;
     }
-    if (j >= alvo.length && perdidas <= folga) return true;
+    if (j >= alvo.length - (folga - perdidas)) return true;   // a última também pode ter sido a perdida
   }
   return false;
 }
