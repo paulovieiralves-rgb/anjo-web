@@ -178,6 +178,7 @@
     <div class="cartao">
       <b>🆘 Pedir socorro</b>
       <button id="btSacudir">📳 SOS automático: ligado</button>
+      <button id="btSensib">🎚 Sensibilidade: média</button>
       <div id="autoInfo" class="sub" style="margin-top:4px"></div>
       <div id="caixaSenha" style="margin-top:10px">
         <div class="linha" style="align-items:center"><div style="flex:1"><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
@@ -214,7 +215,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C57";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C58";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -225,7 +226,17 @@ const PLURAL = { person:"pessoas", bicycle:"bicicletas", car:"carros", motorcycl
 const ATENCAO = new Set(["FORA DA ROTA","PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"]);
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
              set(k, v) { try { localStorage.setItem(k, v); } catch {} }, del(k) { try { localStorage.removeItem(k); } catch {} } };
-let soPosicao = ls.get("anjo.soPosicao") === "1", ultimoAlerta = null, estadoAtual = "normal", ultimaTroca = 0;   // modo só posição (C39) e último alerta (faixa "à frente")
+let soPosicao = ls.get("anjo.soPosicao") === "1", ultimoAlerta = null, estadoAtual = "normal", ultimaTroca = 0;
+// Sensibilidade do SOS automático (C58): tranco (m/s²; andar ≈ 13, 1 g = 9,8), grito (dBFS e centro do som em Hz),
+// quantos trechos de 0,1 s de grito em 1,2 s e quantos picos para as sacudidas
+const SENSIB = {
+  baixa: { tranco: 25, gritoDb: -14, gritoHz: 1000, gritoN: 4, sacode: 20, nome: "baixa" },
+  media: { tranco: 19, gritoDb: -20, gritoHz: 850,  gritoN: 3, sacode: 17, nome: "média" },
+  alta:  { tranco: 15, gritoDb: -26, gritoHz: 700,  gritoN: 2, sacode: 14, nome: "alta" },
+};
+let sensib = SENSIB[ls.get("anjo.sensib")] || SENSIB.media;
+let picoG = 0, picoT = 0;
+let LIM_TRANCO = sensib.tranco, LIM_GRITO_DB = sensib.gritoDb, LIM_GRITO_HZ = sensib.gritoHz;   // modo só posição (C39) e último alerta (faixa "à frente")
 
 /* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
 function lerFragmento() {
@@ -1121,8 +1132,9 @@ window.addEventListener("devicemotion", ev => {
   const g = Math.hypot(a.x, a.y, a.z);   // em repouso ≈ 9,8
   if (g > maiorG) maiorG = g;
   // pico forte: > 2 g (andar fica perto de 1,3 g); 5 picos em 3 s disparam o SOS
+  if (g > picoG || agora - picoT > 3000) { picoG = g; picoT = agora; }   // maior movimento dos últimos 3 s (linha "Teste:")
   if (g > LIM_TRANCO && agora - ultimoTranco > 1500) registrarTranco(g, agora);   // tranco forte e único (C43)
-  if (g > 20 && (!picos.length || agora - picos[picos.length - 1] > 120)) {
+  if (g > sensib.sacode && (!picos.length || agora - picos[picos.length - 1] > 120)) {
     picos = picos.filter(t => agora - t < 3000); picos.push(agora);
     if (picos.length >= 5) { picos = []; dispararSos("sacudir"); }
   }
@@ -1136,9 +1148,7 @@ window.addEventListener("devicemotion", ev => {
    - fuga: logo depois do tranco, a velocidade salta de parado/andando para corrida ou moto.
    Grito + tranco a menos de 5 s, ou tranco + fuga em até 12 s, disparam o SOS discreto;
    a central recebe como "possível roubo" e confirma pelo vídeo e áudio. Cada sinal sozinho não dispara. */
-const LIM_TRANCO = 25;          // m/s² (≈ 2,5 g; andar ≈ 1,3 g)
-const LIM_GRITO_DB = -14;       // dBFS (volume muito alto)
-const LIM_GRITO_HZ = 1000;      // centro do espectro (grito é agudo)
+// limites vêm da sensibilidade escolhida em Ajustes (C58): ver SENSIB
 let ultimoTranco = 0, trancoG = 0, velAntes = 0, ultimoGrito = 0, maxDb = -99, maxDbT = 0, velHist = [];
 let ctxAudio = null, analisador = null, gritoMs = [], gpsVigia = null;
 function registrarTranco(g, agora) {
@@ -1170,7 +1180,7 @@ setInterval(() => {               // análise do som a cada 100 ms
   const centro = den ? num / den : 0, agora = Date.now();
   if (db > maxDb || agora - maxDbT > 3000) { maxDb = db; maxDbT = agora; }
   gritoMs = gritoMs.filter(t => agora - t < 1200);
-  if (db > LIM_GRITO_DB && centro > LIM_GRITO_HZ) { gritoMs.push(agora); if (gritoMs.length >= 4) ultimoGrito = agora; }
+  if (db > LIM_GRITO_DB && centro > LIM_GRITO_HZ) { gritoMs.push(agora); if (gritoMs.length >= sensib.gritoN) ultimoGrito = agora; }
 }, 100);
 setInterval(() => {               // combinações que disparam o SOS
   const agora = Date.now();
@@ -1184,8 +1194,8 @@ setInterval(() => {               // combinações que disparam o SOS
   }
   if (sosAtivo || !sacudir) { $("autoInfo").textContent = ""; return; }
   const ha = t => t ? `há ${Math.round((agora - t) / 1000)} s` : "—";
-  $("autoInfo").textContent = `Teste: tranco ${ultimoTranco ? trancoG.toFixed(1).replace(".", ",") + " g " + ha(ultimoTranco) : "—"} · `
-    + (ativo && analisador ? `som ${Math.round(maxDb)} dB${agora - ultimoGrito < 6000 ? " · grito ✓" : ""}` : "grito: só transmitindo")
+  $("autoInfo").textContent = `Teste: movimento agora ${(picoG / 9.81).toFixed(1).replace(".", ",")} g (tranco a partir de ${(LIM_TRANCO / 9.81).toFixed(1).replace(".", ",")} g) · tranco ${ultimoTranco ? trancoG.toFixed(1).replace(".", ",") + " g " + ha(ultimoTranco) : "—"} · `
+    + (ativo && analisador ? `som ${Math.round(maxDb)} dB (grito a partir de ${LIM_GRITO_DB} dB)${agora - ultimoGrito < 6000 ? " · grito ✓" : ""}` : "grito: só transmitindo")
     + ` · ${(velHist.length ? velHist[velHist.length - 1].v * 3.6 : 0).toFixed(0)} km/h`;
 }, 500);
 // parado: GPS leve só para perceber a fuga (transmitindo, o GPS da transmissão faz isso)
@@ -1357,6 +1367,16 @@ document.querySelectorAll("#abas button").forEach(b => b.onclick = () => abrirAb
 if (par) { document.body.classList.add("fixa"); if (mapa) setTimeout(() => mapa.invalidateSize(), 100); }
 $("btEngrenagem").onclick = () => abrirAba("abaAjustes");
 $("btVoltar").onclick = () => abrirAba("abaPasseio");
+// Sensibilidade do SOS automático: baixa → média → alta (movimento e microfone juntos)
+function botaoSensib() { $("btSensib").textContent = "🎚 Sensibilidade (movimento e microfone): " + sensib.nome; }
+$("btSensib").onclick = () => {
+  const ordem = ["baixa", "media", "alta"], atual = ordem.find(k => SENSIB[k] === sensib) || "media";
+  const prox = ordem[(ordem.indexOf(atual) + 1) % 3];
+  sensib = SENSIB[prox]; ls.set("anjo.sensib", prox);
+  LIM_TRANCO = sensib.tranco; LIM_GRITO_DB = sensib.gritoDb; LIM_GRITO_HZ = sensib.gritoHz;
+  botaoSensib();
+};
+botaoSensib();
 // Novo passeio (C55): arquiva o passeio atual na central e limpa o mapa (percurso, câmeras virtuais e alertas)
 $("btNovoPasseio").onclick = () => {
   if (!confirm("Começar um passeio novo? O mapa fica limpo e o atual é guardado na central.")) return;
