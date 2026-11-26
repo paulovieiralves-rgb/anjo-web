@@ -214,7 +214,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C56";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C57";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -842,6 +842,8 @@ setInterval(() => {
 
 async function iniciar(silencioso = false) {
   vigiarGps(false); prepararAudio();
+  // cada sessão começa com a tela limpa (a central salva a anterior); paradas curtas (< 2 min) continuam o passeio
+  if (!sosAtivo && Date.now() - (Number(ls.get("anjo.paradoEm")) || 0) > 120000) limparMapaLocal();
   pararEscutaLocal();                 // transmitindo: quem ouve a senha é a central
   await sairEspera();
   avisoCentral = "";
@@ -858,6 +860,7 @@ async function iniciar(silencioso = false) {
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
 }
 async function parar() {
+  ls.set("anjo.paradoEm", String(Date.now()));
   ativo = false; clearTimeout(tentativaConexao); $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde";
   clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
   try { await wakeLock?.release(); } catch {} wakeLock = null;
@@ -1358,11 +1361,14 @@ $("btVoltar").onclick = () => abrirAba("abaPasseio");
 $("btNovoPasseio").onclick = () => {
   if (!confirm("Começar um passeio novo? O mapa fica limpo e o atual é guardado na central.")) return;
   enviar({ tipo: "novo_passeio" });
+  limparMapaLocal(); abrirAba("abaPasseio");
+};
+function limparMapaLocal() {
   try { percurso.length = 0; trilha && trilha.setLatLngs([]); } catch {}
   try { pinosAlerta.forEach(p => p.marcador && p.marcador.remove()); pinosAlerta.length = 0; } catch {}
   try { Object.values(camsVirtuais || {}).forEach(m => m.remove()); for (const k in camsVirtuais) delete camsVirtuais[k]; } catch {}
-  ultimoAlerta = null; abrirAba("abaPasseio");
-};
+  ultimoAlerta = null;
+}
 // origem, modo (a pé/bike/carro) e marcar no mapa ficam escondidos até o usuário pedir
 const EMOJI_MODO = { foot: "🚶", bike: "🚲", car: "🚗" };
 function rotuloOpcoes() { $("btOpcRota").textContent = EMOJI_MODO[$("rotaModo").value] + ($("rotaMais").style.display === "none" ? " Opções" : " Fechar"); }
