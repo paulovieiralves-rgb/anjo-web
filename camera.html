@@ -64,7 +64,9 @@
   /* Safari: tira as "costuras" finas entre os pedaços (tiles) do mapa */
   .leaflet-tile-container img.leaflet-tile { width:256.6px !important; height:256.6px !important; }
   /* ---- tela limpa (C39): cabeçalho, mapa protagonista, faixa "à frente", abas ---- */
-  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  body { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  #barraIniciar { align-items:stretch; } #barraIniciar #btIniciar { flex:1; margin-top:8px; } #barraIniciar .icone { width:56px; height:auto; border-radius:12px; margin-top:8px; }
+  #btVoltar { margin-top:4px; }
   #topo { display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:10px; }
   #nome { font-size:18px; font-weight:700; }
   #topo .link { margin:2px 0 0; padding:0; background:none !important; font-size:13px; font-weight:500; color:var(--sub); }
@@ -129,7 +131,6 @@
       <div id="nome">Câmera</div>
       <div id="link" class="link">Transmissão parada</div>
     </div>
-    <button id="btEngrenagem" class="icone" aria-label="Ajustes">⚙</button>
   </header>
   <button id="btAtualizar" class="verde" style="display:none">⟳ Versão nova disponível — toque para atualizar</button>
   <div id="alerta"></div>
@@ -151,22 +152,22 @@
       <div id="tela"><video id="video" autoplay playsinline muted></video><canvas id="caixas"></canvas></div>
     </div>
     <div id="frente" class="frente neutro">Toque em ▶ Iniciar para o anjo acompanhar o seu passeio</div>
-    <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
-    <button id="btIniciar" class="verde">▶ Iniciar transmissão</button>
-    <div class="linha"><button id="btModo">📷 Com câmera</button><button id="btGravar">⏺ Gravar</button><button id="btCam" class="pequeno">🔄</button></div>
+    <div class="linha" id="barraIniciar"><button id="btIniciar" class="verde">▶ Iniciar transmissão</button><button id="btEngrenagem" class="icone" aria-label="Ajustes">⚙</button></div>
   </section>
 
-  <!-- ===== Aba Histórico ===== -->
-  <section id="abaHistorico" class="aba" style="display:none">
-    <h2>Hoje</h2>
-    <div id="histResumo" class="cartao sub"></div>
-    <h2>Alertas recebidos</h2>
-    <div id="histLista"><div class="sub">Nenhum alerta hoje.</div></div>
-  </section>
-
-  <!-- ===== Aba Ajustes: tudo o que se configura uma vez ===== -->
+  <!-- ===== Ajustes (C53): tudo o que não é o mapa — transmissão, histórico, voz, SOS ===== -->
   <section id="abaAjustes" class="aba" style="display:none">
-    <h2>Ajustes</h2>
+    <button id="btVoltar">← Voltar ao mapa</button>
+    <div class="cartao">
+      <b>Transmissão</b>
+      <div class="linha"><button id="btModo">📷 Com câmera</button><button id="btGravar">⏺ Gravar</button><button id="btCam" class="pequeno">🔄</button></div>
+      <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
+    </div>
+    <div class="cartao" id="abaHistorico">
+      <b>Histórico de hoje</b>
+      <div id="histResumo" class="sub" style="margin:4px 0 8px"></div>
+      <div id="histLista"><div class="sub">Nenhum alerta hoje.</div></div>
+    </div>
     <div class="sub" id="validade"></div>
     <div class="cartao">
       <b>Voz do anjo</b>
@@ -208,15 +209,11 @@
     </div>
   </section>
 
-  <nav id="abas">
-    <button data-aba="abaPasseio" class="sel"><span>🧭</span>Passeio</button>
-    <button data-aba="abaHistorico"><span>🕘</span>Histórico</button>
-    <button data-aba="abaAjustes"><span>⚙</span>Ajustes</button>
-  </nav>
+
 </div>
 
 <script>
-const VERSAO_PAGINA = "C52";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C53";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -1344,17 +1341,18 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 
 /* ---------- tela limpa (C39): abas, faixa "à frente", histórico e modo só posição ---------- */
 function abrirAba(id) {
-  document.querySelectorAll(".aba").forEach(a => a.style.display = a.id === id ? "" : "none");
+  document.querySelectorAll("section.aba").forEach(a => a.style.display = a.id === id ? "" : "none");
   document.body.classList.toggle("fixa", id === "abaPasseio");
   document.querySelectorAll("#abas button").forEach(b => b.classList.toggle("sel", b.dataset.aba === id));
   if (id !== "abaPasseio" && estadoAtual !== "normal") estadoTela("normal");
   if (id === "abaPasseio" && mapa) setTimeout(() => mapa.invalidateSize(), 50);
-  if (id === "abaHistorico") desenharHistorico();
+  if (id === "abaAjustes") desenharHistorico();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll("#abas button").forEach(b => b.onclick = () => abrirAba(b.dataset.aba));
 if (par) { document.body.classList.add("fixa"); if (mapa) setTimeout(() => mapa.invalidateSize(), 100); }
-$("btEngrenagem").onclick = () => abrirAba($("abaAjustes").style.display === "none" ? "abaAjustes" : "abaPasseio");
+$("btEngrenagem").onclick = () => abrirAba("abaAjustes");
+$("btVoltar").onclick = () => abrirAba("abaPasseio");
 // origem, modo (a pé/bike/carro) e marcar no mapa ficam escondidos até o usuário pedir
 const EMOJI_MODO = { foot: "🚶", bike: "🚲", car: "🚗" };
 function rotuloOpcoes() { $("btOpcRota").textContent = EMOJI_MODO[$("rotaModo").value] + ($("rotaMais").style.display === "none" ? " Opções" : " Fechar"); }
