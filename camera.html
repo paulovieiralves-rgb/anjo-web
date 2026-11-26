@@ -162,6 +162,7 @@
       <b>Transmissão</b>
       <div class="linha"><button id="btModo">📷 Com câmera</button><button id="btGravar">⏺ Gravar</button><button id="btCam" class="pequeno">🔄</button></div>
       <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
+      <button id="btNovoPasseio">🧹 Novo passeio (limpa o mapa)</button>
     </div>
     <div class="cartao" id="abaHistorico">
       <b>Histórico de hoje</b>
@@ -213,7 +214,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C54";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C55";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -1353,6 +1354,15 @@ document.querySelectorAll("#abas button").forEach(b => b.onclick = () => abrirAb
 if (par) { document.body.classList.add("fixa"); if (mapa) setTimeout(() => mapa.invalidateSize(), 100); }
 $("btEngrenagem").onclick = () => abrirAba("abaAjustes");
 $("btVoltar").onclick = () => abrirAba("abaPasseio");
+// Novo passeio (C55): arquiva o passeio atual na central e limpa o mapa (percurso, câmeras virtuais e alertas)
+$("btNovoPasseio").onclick = () => {
+  if (!confirm("Começar um passeio novo? O mapa fica limpo e o atual é guardado na central.")) return;
+  enviar({ tipo: "novo_passeio" });
+  try { percurso.length = 0; trilha && trilha.setLatLngs([]); } catch {}
+  try { pinosAlerta.forEach(p => p.marcador && p.marcador.remove()); pinosAlerta.length = 0; } catch {}
+  try { Object.values(camsVirtuais || {}).forEach(m => m.remove()); for (const k in camsVirtuais) delete camsVirtuais[k]; } catch {}
+  ultimoAlerta = null; abrirAba("abaPasseio");
+};
 // origem, modo (a pé/bike/carro) e marcar no mapa ficam escondidos até o usuário pedir
 const EMOJI_MODO = { foot: "🚶", bike: "🚲", car: "🚗" };
 function rotuloOpcoes() { $("btOpcRota").textContent = EMOJI_MODO[$("rotaModo").value] + ($("rotaMais").style.display === "none" ? " Opções" : " Fechar"); }
