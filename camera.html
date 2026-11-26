@@ -214,7 +214,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C55";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C56";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -269,9 +269,9 @@ function iniciarMapa() {
   if (mapa || !window.L || !par) return;
   mapa = L.map("mapa", { zoomControl: true }).setView([-22.9847, -43.2003], 16);
   const ruas = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 20, maxNativeZoom: 19, detectRetina: true, attribution: "Tiles © Esri" }).addTo(mapa);   // tela de alta resolução: tiles nítidos
+    { maxZoom: 19, attribution: "Tiles © Esri" }).addTo(mapa);   // sem detectRetina (C56): deixava o mapa em branco no iPhone
   const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 20, maxNativeZoom: 19, detectRetina: true, attribution: "Tiles © Esri" });
+    { maxZoom: 19, attribution: "Tiles © Esri" });
   L.control.layers({ "Ruas": ruas, "Satélite": sat }).addTo(mapa);
   trilha = L.polyline([], { color: "#2563eb", weight: 5 }).addTo(mapa);
   mapa.on("dragstart", () => seguir = false);
