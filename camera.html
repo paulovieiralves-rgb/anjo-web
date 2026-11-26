@@ -216,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C47";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C48";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -932,14 +932,31 @@ let fraseEnviada = null, rec = null, ouvindoLocal = false, wakeEscuta = null, re
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let ouvirLocal = ls.get("anjo.ouvirLocal") !== "0";   // padrão: ouvindo ativado
 function normalizar(t) { return (t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z ]+/g, " ").split(/\s+/).filter(Boolean); }
-function bateFrase(texto, frase) {           // todas as palavras, na ordem, numa janela curta (igual ao servidor)
-  const alvo = normalizar(frase), ouv = normalizar(texto);
-  if (!alvo.length || ouv.length < alvo.length) return false;
-  for (let ini = 0; ini < ouv.length; ini++) {
-    if (ouv[ini] !== alvo[0]) continue;
-    let i = ini, j = 0;
-    while (i < ouv.length && j < alvo.length && i - ini <= alvo.length + 2) { if (ouv[i] === alvo[j]) j++; i++; }
-    if (j === alvo.length) return true;
+// Conferência da senha (C48, igual ao servidor): palavras-chave na ordem, ignora "o/a/de…",
+// aceita uma letra diferente por palavra e, em frases de 4+ palavras-chave, uma palavra perdida.
+const PEQUENAS = new Set(["o","a","os","as","de","do","da","dos","das","e","um","uma","no","na","em","que"]);
+function palavrasChave(frase) { const p = normalizar(frase), c = p.filter(w => !PEQUENAS.has(w)); return c.length >= 2 ? c : p; }
+function parecida(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) { let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d <= 1; }
+  const [curta, longa] = a.length < b.length ? [a, b] : [b, a];
+  for (let i = 0; i < longa.length; i++) if (longa.slice(0, i) + longa.slice(i + 1) === curta) return true;
+  return false;
+}
+function bateFrase(texto, frase) {
+  const alvo = palavrasChave(frase), ouv = normalizar(texto);
+  if (!alvo.length) return false;
+  const folga = alvo.length >= 4 ? 1 : 0;
+  for (let ini = 0; ini < ouv.length; ini++) for (let comeco = 0; comeco <= folga; comeco++) {
+    if (!parecida(ouv[ini], alvo[comeco])) continue;
+    let i = ini, j = comeco, perdidas = comeco;
+    while (i < ouv.length && j < alvo.length && i - ini <= alvo.length + 3) {
+      if (parecida(ouv[i], alvo[j])) j++;
+      else if (perdidas < folga && j + 1 < alvo.length && parecida(ouv[i], alvo[j + 1])) { perdidas++; j += 2; }
+      i++;
+    }
+    if (j >= alvo.length && perdidas <= folga) return true;
   }
   return false;
 }
@@ -979,6 +996,9 @@ async function escutaLocal() {
         if (bateFrase(txt, frase)) { pararEscutaLocal(); dispararSos("senha falada (celular)"); return; }
       }
     }
+    // a frase pode vir quebrada em dois pedaços: confere também os últimos pedaços juntos
+    const junto = Array.from(ev.results).slice(-3).map(x => x[0].transcript).join(" ");
+    if (bateFrase(junto, frase)) { pararEscutaLocal(); dispararSos("senha falada (celular)"); }
   };
   r.onerror = ev => {
     if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
