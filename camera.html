@@ -216,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C46";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C47";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -769,18 +769,31 @@ function enviar(msg, confiavel = true) {
 function botaoGravar() { $("btGravar").textContent = gravar ? "⏺ Gravando" : "⏺ Gravar"; $("btGravar").className = gravar ? "vermelho" : ""; }
 botaoGravar();
 
+// Conexão com uma tentativa por vez (C47): antes, uma queda podia abrir duas conexões com o mesmo nome,
+// que se derrubavam uma à outra sem parar ("Sem conexão — tentando de novo" até recarregar a página).
+let conectando = false, tentativaConexao = null;
+function agendarConexao(ms) { clearTimeout(tentativaConexao); tentativaConexao = setTimeout(() => conectar().catch(() => {}), ms); }
 async function conectar() {
-  if (!ativo) return;
+  if (!ativo || conectando) return;
+  conectando = true; clearTimeout(tentativaConexao);
+  try { await conectarUmaVez(); } finally { conectando = false; }
+}
+async function conectarUmaVez() {
   const R = LivekitClient;
-  room = new R.Room({ adaptiveStream:false, dynacast:false,
+  if (room) { const velho = room; room = null; try { velho.removeAllListeners(); await velho.disconnect(); } catch {} }
+  const este = new R.Room({ adaptiveStream:false, dynacast:false,
     videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution },
     publishDefaults: { simulcast:false, videoEncoding: { maxBitrate: 900000, maxFramerate: 15 } } });
+  room = este;
   room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar: gravar || sosAtivo }))
       .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota(); } })
       .on(R.RoomEvent.Disconnected, motivo => {
+        if (room !== este) return;                       // conexão antiga, já substituída
         $("video").srcObject = null;
         if (motivo === R.DisconnectReason.PARTICIPANT_REMOVED) { desconectadoPelaCentral({ mensagem: "Desconectado pela central" }); return; }
-        if (ativo && motivo !== R.DisconnectReason.CLIENT_INITIATED) setTimeout(() => conectar().catch(() => {}), 3000);
+        if (motivo === R.DisconnectReason.DUPLICATE_IDENTITY) {   // outro aparelho entrou com o mesmo nome
+          $("link").textContent = "Outro celular entrou com o nome " + par.nome + ". Use um QR com outro nome."; parar(); return; }
+        if (ativo && motivo !== R.DisconnectReason.CLIENT_INITIATED) agendarConexao(3000);
       })
       .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
         if (topico !== "anjo") return;
@@ -820,9 +833,14 @@ async function conectar() {
     console.log(e);
     if (/revoked|expired/i.test(e.message || "")) { tokenInvalido(); return; }
     $("link").textContent = "Falha ao conectar: " + (e.message || e);
-    if (ativo) setTimeout(() => conectar().catch(() => {}), 5000);
+    if (ativo) agendarConexao(5000);
   }
 }
+
+setInterval(() => {
+  if (!ativo || conectando) return;
+  if (!room || room.state === "disconnected") agendarConexao(0);
+}, 5000);
 
 async function iniciar(silencioso = false) {
   vigiarGps(false); prepararAudio();
@@ -842,7 +860,7 @@ async function iniciar(silencioso = false) {
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
 }
 async function parar() {
-  ativo = false; $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde";
+  ativo = false; clearTimeout(tentativaConexao); $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde";
   clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
   try { await wakeLock?.release(); } catch {} wakeLock = null;
   await room?.disconnect(); room = null; ack = null; dets = null;
