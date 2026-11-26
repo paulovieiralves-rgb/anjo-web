@@ -77,7 +77,15 @@
   #mapaCaixa { position:relative; }
   #mapa { height:calc(100vh - 430px); height:calc(100dvh - 430px); min-height:230px; }
   #tela { position:absolute; right:8px; bottom:8px; width:30%; max-width:140px; z-index:500; border:2px solid #fff; border-radius:10px; box-shadow:0 2px 8px #0008; }
-  #tela.grande { top:10px; left:0; right:0; bottom:0; width:auto; max-width:none; aspect-ratio:auto; border:0; box-shadow:none; z-index:1100; }
+  /* C46: telas cheias e miniaturas (2 toques na miniatura troca; 2 toques na tela grande volta ao normal) */
+  body.fixa #mapa.telaCheia, #mapa.telaCheia { position:fixed !important; inset:0; width:100vw; height:100vh; height:100dvh; margin:0; border-radius:0; z-index:1800; }
+  #mapa.telaCheia .leaflet-top { top:env(safe-area-inset-top, 0px); }
+  body.fixa #mapa.mini, #mapa.mini { position:fixed !important; right:12px; bottom:calc(16px + env(safe-area-inset-bottom)); width:120px; height:160px; margin:0;
+    border:2px solid #fff; border-radius:10px; z-index:1900; box-shadow:0 2px 10px #000a; }
+  #mapa.mini .leaflet-control-container { display:none; }
+  #tela.telaCheia { position:fixed; inset:0; width:100vw; height:100vh; height:100dvh; max-width:none; aspect-ratio:auto; border:0; border-radius:0; box-shadow:none; z-index:1800; }
+  body.telaCheia #alerta { position:fixed; top:calc(8px + env(safe-area-inset-top)); left:60px; right:12px; z-index:2000; }
+  #tela.mini { position:fixed; right:12px; bottom:calc(16px + env(safe-area-inset-bottom)); z-index:1900; }
   body.soPosicao #tela { display:none; }
   .frente { border-radius:10px; padding:10px 12px; margin-top:8px; font-size:14px; }
   .frente.neutro { background:#1e293b; color:var(--sub); }
@@ -208,7 +216,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C45";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C46";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -219,7 +227,7 @@ const PLURAL = { person:"pessoas", bicycle:"bicicletas", car:"carros", motorcycl
 const ATENCAO = new Set(["FORA DA ROTA","PERMANÊNCIA PROLONGADA","CORRIDA","MOTO COM GARUPA","ENGARRAFAMENTO","PEDESTRES ATRAVESSANDO"]);
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
              set(k, v) { try { localStorage.setItem(k, v); } catch {} }, del(k) { try { localStorage.removeItem(k); } catch {} } };
-let soPosicao = ls.get("anjo.soPosicao") === "1", ultimoAlerta = null;   // modo só posição (C39) e último alerta (faixa "à frente")
+let soPosicao = ls.get("anjo.soPosicao") === "1", ultimoAlerta = null, estadoAtual = "normal", ultimaTroca = 0;   // modo só posição (C39) e último alerta (faixa "à frente")
 
 /* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
 function lerFragmento() {
@@ -278,8 +286,7 @@ function iniciarMapa() {
     b.textContent = "⛶"; b.href = "#"; b.title = "Tela cheia";
     b.style.cssText = "width:30px;height:30px;line-height:30px;text-align:center;background:#fff;color:#000;font-size:20px";
     L.DomEvent.disableClickPropagation(b);
-    b.onclick = e => { e.preventDefault(); const cheio = $("mapa").classList.toggle("cheio");
-      b.textContent = cheio ? "✕ Sair do mapa" : "⛶"; b.classList.toggle("sairCheio", cheio); setTimeout(() => mapa.invalidateSize(), 50); };
+    b.onclick = e => { e.preventDefault(); estadoTela(estadoAtual === "mapa" ? "normal" : "mapa"); };
     return b; } });
   new Cheio({ position: "topleft" }).addTo(mapa);
   setTimeout(() => mapa.invalidateSize(), 300);
@@ -855,7 +862,7 @@ function marcaSos() { $("nome").textContent = par ? par.nome : "Câmera"; $("nom
 async function dispararSos(motivo) {
   const ja = sosAtivo;
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
-  discreto(true);
+  discreto(true); estadoTela("normal");
   if (!ja) console.log("SOS:", motivo);
   if (!ativo) { frontal = true; await iniciar(true); }
   else if (soPosicao && room && !room.localParticipant.isCameraEnabled) {   // só posição: o SOS liga a câmera da frente
@@ -871,18 +878,35 @@ function fimSos() {
   if (ativo) { $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho"; }   // desfaz o "parado" de fachada
   sosAtivo = false; ls.del("anjo.sos"); ls.del("anjo.sosMotivo"); clearInterval(sosRep); sosRep = null; marcaSos();
 }
-// Dois toques na miniatura da câmera: a imagem cobre o mapa; dois toques nela de novo: volta a miniatura (C44)
-(() => {
-  const tela = $("tela"); let ultimo = 0;
-  ls.del("anjo.semImagem");
-  const alternar = () => {
-    if (sosAtivo) return;
-    tela.classList.toggle("grande");
-    if (!tela.classList.contains("grande") && mapa) setTimeout(() => mapa.invalidateSize(), 50);
-  };
-  tela.addEventListener("touchend", ev => { const agora = Date.now(); if (agora - ultimo < 350) { ev.preventDefault(); alternar(); ultimo = 0; } else ultimo = agora; });
-  tela.addEventListener("dblclick", alternar);
-})();
+// Telas (C46): "normal" = mapa com a câmera em miniatura; "camera" = câmera na tela toda + mapa em miniatura;
+// "mapa" = mapa na tela toda + câmera em miniatura. 2 toques na miniatura: troca; 2 toques na tela grande: volta ao normal.
+function estadoTela(novo) {
+  if (sosAtivo || (soPosicao && novo === "camera")) novo = "normal";
+  estadoAtual = novo;
+  const m = $("mapa"), t = $("tela");
+  m.classList.toggle("telaCheia", novo === "mapa"); m.classList.toggle("mini", novo === "camera");
+  t.classList.toggle("telaCheia", novo === "camera"); t.classList.toggle("mini", novo === "mapa");
+  document.body.classList.toggle("telaCheia", novo !== "normal");   // alertas continuam aparecendo por cima
+  if (mapa) { novo === "mapa" ? mapa.doubleClickZoom.disable() : mapa.doubleClickZoom.enable(); setTimeout(() => mapa.invalidateSize(), 60); }
+}
+function doisToques(qual) {
+  const agora = Date.now(); if (agora - ultimaTroca < 500) return; ultimaTroca = agora;
+  if (estadoAtual === "normal") { if (qual === "camera") estadoTela("camera"); return; }   // no normal, 2 toques no mapa = zoom
+  const grande = estadoAtual;                    // "camera" ou "mapa"
+  estadoTela(qual === grande ? "normal" : qual); // tela grande: volta; miniatura: troca
+}
+function ouvirDoisToques(el, qual) {
+  let ultimo = 0;
+  el.addEventListener("touchend", ev => {
+    if (ev.touches.length || ev.changedTouches.length > 1) return;
+    const agora = Date.now();
+    if (agora - ultimo < 350) { if (qual === "camera" || estadoAtual !== "normal") ev.preventDefault(); ultimo = 0; doisToques(qual); } else ultimo = agora;
+  }, { passive: false });
+  el.addEventListener("dblclick", () => doisToques(qual));
+}
+ls.del("anjo.semImagem");
+ouvirDoisToques($("tela"), "camera");
+ouvirDoisToques($("mapa"), "mapa");
 // Senha falada no próprio celular (C35, simulação do app nativo): com a transmissão PARADA e a página aberta,
 // o reconhecimento de voz do navegador escuta a frase; ao ouvir, liga a transmissão e entra no SOS discreto.
 // Com a transmissão ligada, quem escuta é a central (áudio da transmissão).
@@ -1273,6 +1297,7 @@ function abrirAba(id) {
   document.querySelectorAll(".aba").forEach(a => a.style.display = a.id === id ? "" : "none");
   document.body.classList.toggle("fixa", id === "abaPasseio");
   document.querySelectorAll("#abas button").forEach(b => b.classList.toggle("sel", b.dataset.aba === id));
+  if (id !== "abaPasseio" && estadoAtual !== "normal") estadoTela("normal");
   if (id === "abaPasseio" && mapa) setTimeout(() => mapa.invalidateSize(), 50);
   if (id === "abaHistorico") desenharHistorico();
   window.scrollTo(0, 0);
@@ -1370,7 +1395,7 @@ function botaoModo() {
   $("btCam").style.display = soPosicao ? "none" : "";
 }
 $("btModo").onclick = async () => {
-  soPosicao = !soPosicao; ls.set("anjo.soPosicao", soPosicao ? "1" : "0"); botaoModo();
+  soPosicao = !soPosicao; ls.set("anjo.soPosicao", soPosicao ? "1" : "0"); botaoModo(); if (soPosicao && estadoAtual !== "normal") estadoTela("normal");
   if (ativo && !sosAtivo) { await ligarCamera(!soPosicao); enviar({ tipo:"modo", so_posicao: soPosicao }); }
 };
 botaoModo();
