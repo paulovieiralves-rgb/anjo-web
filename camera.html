@@ -215,7 +215,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C61";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C62";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -1327,10 +1327,19 @@ setInterval(() => {
   faixaFrente(cls);
 }, 1000);
 
+// C62: antes redesenhava 60×/s e recriava o canvas a cada quadro (deixava o celular lento e quente).
+// Agora só desenha quando chegam caixas novas, quando a tela muda de tamanho ou quando as caixas expiram.
+let desenhado = 0, tamCaixas = "", caixasNaTela = false;
 function desenhar() {
-  const cv = $("caixas"), ctx = cv.getContext("2d"), r = cv.getBoundingClientRect();
-  cv.width = r.width; cv.height = r.height; ctx.clearRect(0, 0, cv.width, cv.height);
-  if (dets && Date.now() - detsT < 2500 && ativo) {
+  const cv = $("caixas"), r = cv.getBoundingClientRect();
+  const tam = Math.round(r.width) + "x" + Math.round(r.height);
+  const vale = dets && Date.now() - detsT < 2500 && ativo;
+  if (tam === tamCaixas && (vale ? desenhado === detsT : !caixasNaTela)) return;   // nada mudou
+  const ctx = cv.getContext("2d");
+  if (tam !== tamCaixas) { cv.width = r.width; cv.height = r.height; tamCaixas = tam; }
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  desenhado = vale ? detsT : 0; caixasNaTela = !!vale;
+  if (vale) {
     const esc = Math.min(cv.width / dets.w, cv.height / dets.h), ox = (cv.width - dets.w * esc) / 2, oy = (cv.height - dets.h * esc) / 2;
     ctx.font = "12px system-ui"; ctx.lineWidth = 2;
     for (const [x, y, w, h, classe, id, susp] of dets.objs) {
@@ -1341,9 +1350,8 @@ function desenhar() {
       ctx.fillStyle = "#000"; ctx.fillText(rot, ox + x * esc + 3, oy + y * esc - 4);
     }
   }
-  requestAnimationFrame(desenhar);
 }
-requestAnimationFrame(desenhar);
+setInterval(desenhar, 100);   // no máximo 10×/s (a central manda as caixas ~4×/s)
 
 /* ---------- atualização automática ----------
    A cada minuto confere camera_versao.json. Parada: recarrega sozinha (o pareamento fica guardado).
