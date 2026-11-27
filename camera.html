@@ -244,7 +244,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C68";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C69";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -961,7 +961,7 @@ let sosAtivo = ls.get("anjo.sos") === "1", sosRep = null, sosOkT = 0;
 function marcaSos() { $("nome").textContent = par ? par.nome : "Câmera"; $("nome").style.color = ""; }   // em SOS, nenhuma marca no celular
 async function dispararSos(motivo) {
   const ja = sosAtivo;
-  if (!sosAtivo) sosOffEscondido = false;
+  if (!sosAtivo) { sosOffEscondido = false; ls.set("anjo.camAntesSos", frontal ? "frente" : "tras"); }   // C69: volta a ela no fim
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
   discreto(true); estadoTela("normal");
   if (!ja) console.log("SOS:", motivo);
@@ -978,6 +978,12 @@ function fimSos() {
   if (soPosicao && room && room.localParticipant.isCameraEnabled) { ligarCamera(false); enviar({ tipo:"modo", so_posicao:true }); }
   if (ativo) { $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho"; }   // desfaz o "parado" de fachada
   sosAtivo = false; ls.del("anjo.sos"); ls.del("anjo.sosMotivo"); clearInterval(sosRep); sosRep = null; marcaSos();
+  // C69: fim do SOS → volta para a câmera que estava antes (normalmente a traseira, voltada para a rua)
+  const antes = ls.get("anjo.camAntesSos"); ls.del("anjo.camAntesSos");
+  if (antes !== "frente" && frontal) {
+    if (ativo && !soPosicao) trocarCamera(false).catch(() => {});
+    else frontal = false;   // só posição ou parado: fica marcada para a próxima vez que a câmera ligar
+  }
 }
 // Telas (C46): "normal" = mapa com a câmera em miniatura; "camera" = câmera na tela toda + mapa em miniatura;
 // "mapa" = mapa na tela toda + câmera em miniatura. 2 toques na miniatura: troca; 2 toques na tela grande: volta ao normal.
