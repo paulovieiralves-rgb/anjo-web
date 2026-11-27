@@ -225,7 +225,7 @@
         o celular e gravar tudo. Nada aparece na tela e o celular não fala. Só a central encerra o SOS.</p>
         <p><b>Como acionar:</b> é automático, com esta página aberta: <b>grito + tranco</b> no celular (a menos de 5 s um do outro;
         o grito só é percebido transmitindo) ou <b>tranco + fuga</b> (o celular arrancado e levado correndo ou de moto).
-        Também: falar a senha, ou sacudir com força 5 vezes em 3 s. Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
+        Também: falar a senha, ou sacudir com força 5 vezes bem rápido (em 1,5 s). Opcional: um <b>atalho do iPhone</b> que abre este link:<br><code id="linkSos"></code></p>
         <p><b>Criar o atalho:</b> app Atalhos → + → Adicionar ação → “Abrir URL” → cole o link → nomeie “Anjo SOS”.
         Depois ligue-o a um gesto: Ajustes → Acessibilidade → Toque → <b>Toque Traseiro</b> → Toque triplo → “Anjo SOS”
         (ou no <b>Botão de Ação</b> do iPhone 15 Pro/16, ou diga “E aí Siri, Anjo SOS”).</p>
@@ -244,7 +244,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C69";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C70";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -275,7 +275,11 @@ let semCentral = false, passeioOff = null, streamLocal = null, abrindoMidia = fa
 const esperas = [];
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
-let LIM_TRANCO = sensib.tranco, LIM_GRITO_DB = sensib.gritoDb, LIM_GRITO_HZ = sensib.gritoHz;   // modo só posição (C39) e último alerta (faixa "à frente")
+// C70: no Android (Galaxy) o sensor dá picos maiores e isolados: limites de movimento 30% mais altos e o pico
+// precisa durar 2 leituras seguidas (um tranco de verdade dura mais que uma leitura; ruído não)
+const ANDROID = /Android/i.test(navigator.userAgent), FATOR_MOV = ANDROID ? 1.3 : 1;
+let gAnterior = 0;
+let LIM_TRANCO = sensib.tranco * FATOR_MOV, LIM_GRITO_DB = sensib.gritoDb, LIM_GRITO_HZ = sensib.gritoHz;   // modo só posição (C39) e último alerta (faixa "à frente")
 
 /* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
 function lerFragmento() {
@@ -1177,7 +1181,7 @@ $("btDiscreto").onclick = () => {
   discreto(!document.body.classList.contains("discreto"));
 };
 discreto(ls.get("anjo.discreto") === "1");
-// sacudir: 5 picos fortes (> 2,5 g) em 3 s; só com a página aberta
+// sacudir: 5 picos fortes em 1,5 s (C70); só com a página aberta
 let sacudir = ls.get("anjo.sacudir") !== "0", picos = [];
 // estado do sensor de movimento: "?" (ainda sem leitura), "ok", "negado"
 let sensor = "?", ultimaLeitura = 0, maiorG = 0;
@@ -1206,13 +1210,16 @@ window.addEventListener("devicemotion", ev => {
   const agora = Date.now();
   if (sensor !== "ok") { sensor = "ok"; botaoSacudir(); }
   if (!sacudir || sosAtivo || !par) return;
-  const g = Math.abs(Math.hypot(a.x, a.y, a.z) - 9.81);   // C59: só o tranco, sem a gravidade (parado ≈ 0; andar ≈ 3–5)
+  const g0 = Math.abs(Math.hypot(a.x, a.y, a.z) - 9.81);   // C59: só o tranco, sem a gravidade (parado ≈ 0; andar ≈ 3–5)
+  const g = ANDROID ? Math.min(g0, gAnterior) : g0; gAnterior = g0;   // C70: Android exige 2 leituras seguidas
   if (g > maiorG) maiorG = g;
   // pico forte: > 2 g (andar fica perto de 1,3 g); 5 picos em 3 s disparam o SOS
   if (g > picoG || agora - picoT > 3000) { picoG = g; picoT = agora; }   // maior movimento dos últimos 3 s (linha "Teste:")
   if (g > LIM_TRANCO && agora - ultimoTranco > 1500) registrarTranco(g, agora);   // tranco forte e único (C43)
-  if (g > sensib.sacode && (!picos.length || agora - picos[picos.length - 1] > 120)) {
-    picos = picos.filter(t => agora - t < 3000); picos.push(agora);
+  if (g > sensib.sacode * FATOR_MOV && (!picos.length || agora - picos[picos.length - 1] > 120)) {
+    // C70: 5 picos em 1,5 s (sacudir de verdade é rápido, 3–6 por segundo). Andar ou correr com o celular no bolso
+    // dá ~2 batidas por segundo e disparava com a janela antiga de 3 s.
+    picos = picos.filter(t => agora - t < 1500); picos.push(agora);
     if (picos.length >= 5) { picos = []; dispararSos("sacudir"); }
   }
 });
@@ -1245,7 +1252,8 @@ function ligarGrito(mediaTrack) {
     analisador = ctxAudio.createAnalyser(); analisador.fftSize = 2048; fonte.connect(analisador);
   } catch (e) { console.log("grito", e); analisador = null; }
 }
-const bufT = new Float32Array(2048), bufF = new Uint8Array(1024);
+const bufT = new Float32Array(2048), bufF = new Uint8Array(1024), bufDb = new Float32Array(1024);
+let planura = 1;
 setInterval(() => {               // análise do som a cada 100 ms
   if (!analisador || !ativo) return;
   analisador.getFloatTimeDomainData(bufT);
@@ -1255,9 +1263,18 @@ setInterval(() => {               // análise do som a cada 100 ms
   let num = 0, den = 0; const hzPorBin = (ctxAudio ? ctxAudio.sampleRate : 48000) / 2048;
   for (let i = 2; i < bufF.length; i++) { num += i * hzPorBin * bufF[i]; den += bufF[i]; }
   const centro = den ? num / den : 0, agora = Date.now();
+  // C70: "planura" do espectro entre 300 Hz e 4 kHz (0 = som com tom, como voz/grito; 1 = chiado, como o tecido
+  // do bolso esfregando no microfone). Grito precisa ter tom.
+  try {
+    analisador.getFloatFrequencyData(bufDb);
+    const i0 = Math.round(300 / hzPorBin), i1 = Math.round(4000 / hzPorBin);
+    let lg = 0, ar = 0, n = 0;
+    for (let i = i0; i < i1; i++) { const pw = Math.pow(10, Math.max(bufDb[i], -140) / 10) + 1e-14; lg += Math.log(pw); ar += pw; n++; }
+    planura = n ? Math.exp(lg / n) / (ar / n) : 1;
+  } catch { planura = 0; }
   if (db > maxDb || agora - maxDbT > 3000) { maxDb = db; maxDbT = agora; }
   gritoMs = gritoMs.filter(t => agora - t < 1200);
-  if (db > LIM_GRITO_DB && centro > LIM_GRITO_HZ) { gritoMs.push(agora); if (gritoMs.length >= sensib.gritoN) ultimoGrito = agora; }
+  if (db > LIM_GRITO_DB && centro > LIM_GRITO_HZ && planura < 0.25) { gritoMs.push(agora); if (gritoMs.length >= sensib.gritoN) ultimoGrito = agora; }
 }, 100);
 setInterval(() => {               // combinações que disparam o SOS
   const agora = Date.now();
@@ -1272,7 +1289,7 @@ setInterval(() => {               // combinações que disparam o SOS
   if (sosAtivo || !sacudir) { $("autoInfo").textContent = ""; return; }
   const ha = t => t ? `há ${Math.round((agora - t) / 1000)} s` : "—";
   $("autoInfo").textContent = `Teste: movimento agora ${(picoG / 9.81).toFixed(1).replace(".", ",")} g (tranco a partir de ${(LIM_TRANCO / 9.81).toFixed(1).replace(".", ",")} g) · tranco ${ultimoTranco ? trancoG.toFixed(1).replace(".", ",") + " g " + ha(ultimoTranco) : "—"} · `
-    + (ativo && analisador ? `som ${Math.round(maxDb)} dB (grito a partir de ${LIM_GRITO_DB} dB)${agora - ultimoGrito < 6000 ? " · grito ✓" : ""}` : "grito: só transmitindo")
+    + (ativo && analisador ? `som ${Math.round(maxDb)} dB (grito a partir de ${LIM_GRITO_DB} dB, ${planura < 0.25 ? "com tom" : "chiado"})${agora - ultimoGrito < 6000 ? " · grito ✓" : ""}` : "grito: só transmitindo")
     + ` · ${(velHist.length ? velHist[velHist.length - 1].v * 3.6 : 0).toFixed(0)} km/h`;
 }, 500);
 // parado: GPS leve só para perceber a fuga (transmitindo, o GPS da transmissão faz isso)
@@ -1461,7 +1478,7 @@ $("btSensib").onclick = () => {
   const ordem = ["baixa", "media", "alta", "maxima"], atual = ordem.find(k => SENSIB[k] === sensib) || "alta";
   const prox = ordem[(ordem.indexOf(atual) + 1) % ordem.length];
   sensib = SENSIB[prox]; ls.set("anjo.sensib2", prox);
-  LIM_TRANCO = sensib.tranco; LIM_GRITO_DB = sensib.gritoDb; LIM_GRITO_HZ = sensib.gritoHz;
+  LIM_TRANCO = sensib.tranco * FATOR_MOV; LIM_GRITO_DB = sensib.gritoDb; LIM_GRITO_HZ = sensib.gritoHz;
   botaoSensib();
 };
 botaoSensib();
