@@ -253,7 +253,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C73";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C74";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -282,6 +282,14 @@ let picoG = 0, picoT = 0;
 let semCentral = false, passeioOff = null, streamLocal = null, abrindoMidia = false, gravLocal = null, enviandoFila = false,
     ultimaFila = 0, inicioT = 0, foraLocal = 0, foraAvisoT = 0, sosOffEscondido = false, offSalvoT = 0;
 const esperas = [];
+let resetEnviadoT = 0;
+function enviarResetPendente() {
+  let p = null; try { p = JSON.parse(ls.get("anjo.sosResetPendente") || "null"); } catch {}
+  if (!p || sosAtivo) return;
+  if (Date.now() - p.t > 10 * 60000) { ls.del("anjo.sosResetPendente"); return; }   // desiste depois de 10 min
+  if (!room || room.state !== "connected" || Date.now() - resetEnviadoT < 3000) return;
+  resetEnviadoT = Date.now(); enviar({ tipo: "sos_reset", motivo: p.motivo });
+}
 let sosTesteLig = ls.get("anjo.sosTeste") !== "0", alarmeSos = null;
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
@@ -888,9 +896,8 @@ async function conectarUmaVez() {
         let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
         for (const w of [...esperas]) if (w.teste(m)) { esperas.splice(esperas.indexOf(w), 1); w.ok(true); }
         if (m.tipo === "ack" && !semCentral && !enviandoFila && Date.now() - ultimaFila > 30000 && temPendencia()) setTimeout(enviarFila, 1500);
-        if (m.tipo === "ack" && ls.get("anjo.sosResetPendente") && !sosAtivo) {
-          enviar({ tipo: "sos_reset", motivo: ls.get("anjo.sosResetPendente") }); ls.del("anjo.sosResetPendente");
-        }
+        if (m.tipo === "ack") enviarResetPendente();
+        if (m.tipo === "sos_fim") ls.del("anjo.sosResetPendente");   // a central confirmou o fim do SOS
         if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== (gravar || sosAtivo)) enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); resumo(m.contagem || {}); }
         else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
         else if (m.tipo === "alerta") mostrarAlerta(m);
@@ -1898,9 +1905,10 @@ function telaSosTeste(lig, motivo) {
 $("btSosReset").onclick = () => {
   const motivo = ls.get("anjo.sosMotivo") || "";
   telaSosTeste(false);
-  if (room && room.state === "connected" && ack && Date.now() - ackT < 5000) enviar({ tipo: "sos_reset", motivo });
-  else ls.set("anjo.sosResetPendente", motivo || "?");   // sem central agora: avisa quando ela voltar
+  // C74: o reset fica pendente até a central confirmar (sos_fim); é reenviado a cada 3 s enquanto houver contato
+  ls.set("anjo.sosResetPendente", JSON.stringify({ motivo: motivo || "?", t: Date.now() })); resetEnviadoT = 0;
   fimSos();
+  enviarResetPendente();
 };
 function rotuloSosTeste() { $("btSosTeste").textContent = "🧪 Teste do SOS (alarme e botão no celular): " + (sosTesteLig ? "ligado" : "desligado"); }
 $("btSosTeste").onclick = () => { sosTesteLig = !sosTesteLig; ls.set("anjo.sosTeste", sosTesteLig ? "1" : "0"); rotuloSosTeste(); };
