@@ -115,6 +115,12 @@
   #abas button { flex:1; margin:0; border-radius:0; background:none; color:var(--sub); font-size:12px; font-weight:600; padding:8px 0 10px; }
   #abas button span { display:block; font-size:20px; }
   #abas button.sel { color:#fff; }
+  #sosOff { position:fixed; left:10px; right:10px; bottom:calc(12px + env(safe-area-inset-bottom)); z-index:2500; background:#450a0a;
+    border:2px solid #ef4444; border-radius:14px; padding:12px; box-shadow:0 4px 20px #000c; }
+  #sosOff a.botao { display:block; text-align:center; text-decoration:none; color:#fff; border-radius:10px; padding:14px; font-weight:700; margin-top:8px; background:#334155; }
+  #sosOff a.verde { background:#15803d; } #sosOff a.vermelho { background:#b91c1c; }
+  .video-item { background:#0f172a; border-radius:8px; padding:8px 10px; margin-top:6px; display:flex; align-items:center; gap:8px; }
+  .video-item span { flex:1; font-size:13px; } .video-item button { width:auto; margin:0; padding:8px 12px; }
   body.discreto #tela, body.discreto #cont, body.discreto #mapaCaixa, body.discreto .rota, body.discreto #alerta,
   body.discreto #frente, body.discreto #histLista, body.discreto .tecnico, body.discreto #autoInfo { display:none !important; }
 </style>
@@ -134,6 +140,15 @@
   </header>
   <button id="btAtualizar" class="verde" style="display:none">⟳ Versão nova disponível — toque para atualizar</button>
   <div id="alerta"></div>
+  <!-- C65: SOS sem contato com a central — o próprio assinante pede ajuda (WhatsApp/SMS/190) -->
+  <div id="sosOff" style="display:none">
+    <b>🆘 Sem contato com a central</b>
+    <div class="sub" style="color:#fecaca">O celular está gravando e continua procurando a central. Peça ajuda:</div>
+    <a id="sosZap" class="botao verde" target="_blank" rel="noopener">📲 Mandar minha posição no WhatsApp</a>
+    <a id="sosSms" class="botao">✉ Mandar minha posição por SMS</a>
+    <a id="sosLigar" class="botao vermelho" href="tel:190">📞 Ligar 190 (Polícia)</a>
+    <button id="sosOffFechar" style="margin-top:8px">Esconder (o SOS continua)</button>
+  </div>
 
   <!-- ===== Aba Passeio: o mapa é o protagonista ===== -->
   <section id="abaPasseio" class="aba">
@@ -164,6 +179,13 @@
       <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
       <button id="btNovoPasseio">🧹 Novo passeio (limpa o mapa)</button>
     </div>
+    <div class="cartao" id="cartaoSemCentral">
+      <b>📴 Sem central</b>
+      <div class="sub" style="margin:4px 0">Se a central não responde, o celular continua funcionando: guarda o percurso, a rota, os alertas e o SOS
+        (e grava o vídeo quando “⏺ Gravar” estiver ligado ou em SOS). Ele fica procurando a central e, ao encontrá-la, envia tudo.</div>
+      <div id="semCentralInfo" class="sub"></div>
+      <div id="listaVideos"></div>
+    </div>
     <div class="cartao" id="abaHistorico">
       <b>Histórico deste passeio</b>
       <div id="histResumo" class="sub" style="margin:4px 0 8px"></div>
@@ -180,6 +202,8 @@
       <button id="btSacudir">📳 SOS automático: ligado</button>
       <button id="btSensib">🎚 Sensibilidade: média</button>
       <div id="autoInfo" class="sub" style="margin-top:4px"></div>
+      <input id="contatoSos" type="tel" inputmode="tel" autocomplete="off" placeholder="📱 Contato de emergência (WhatsApp, com DDD)">
+      <div class="sub">Usado só se o SOS acontecer sem contato com a central.</div>
       <div id="caixaSenha" style="margin-top:10px">
         <div class="linha" style="align-items:center"><div style="flex:1"><b>🔐 Senha falada</b> <span id="senhaStatus" class="sub"></span></div>
           <button id="btSenhaMudar" class="pequeno" style="display:none;margin-top:0">Mudar senha</button></div>
@@ -215,7 +239,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C64";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C65";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -239,6 +263,10 @@ const SENSIB = {
 };
 let sensib = SENSIB[ls.get("anjo.sensib2")] || SENSIB.alta;   // padrão: alta (pedido do Paulo, 26/11)
 let picoG = 0, picoT = 0;
+// C65: sem central (o celular guarda tudo e continua procurando a central)
+let semCentral = false, passeioOff = null, streamLocal = null, abrindoMidia = false, gravLocal = null, enviandoFila = false,
+    ultimaFila = 0, inicioT = 0, foraLocal = 0, foraAvisoT = 0, sosOffEscondido = false, offSalvoT = 0;
+const esperas = [];
 let LIM_TRANCO = sensib.tranco, LIM_GRITO_DB = sensib.gritoDb, LIM_GRITO_HZ = sensib.gritoHz;   // modo só posição (C39) e último alerta (faixa "à frente")
 
 /* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
@@ -800,6 +828,7 @@ let gravar = ls.get("anjo.gravar") === "1", ack = null, ackT = 0, dets = null, d
 const cod = new TextEncoder(), dec = new TextDecoder();
 
 function enviar(msg, confiavel = true) {
+  if (semCentral) guardarSemCentral(msg);
   if (!room || room.state !== "connected") return;
   room.localParticipant.publishData(cod.encode(JSON.stringify(msg)), { reliable: confiavel, topic: "anjo", destinationIdentities: [CENTRAL] }).catch(() => {});
 }
@@ -835,6 +864,8 @@ async function conectarUmaVez() {
       .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
         if (topico !== "anjo") return;
         let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
+        for (const w of [...esperas]) if (w.teste(m)) { esperas.splice(esperas.indexOf(w), 1); w.ok(true); }
+        if (m.tipo === "ack" && !semCentral && !enviandoFila && Date.now() - ultimaFila > 30000 && temPendencia()) setTimeout(enviarFila, 1500);
         if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== (gravar || sosAtivo)) enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); resumo(m.contagem || {}); }
         else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
         else if (m.tipo === "alerta") mostrarAlerta(m);
@@ -853,6 +884,7 @@ async function conectarUmaVez() {
       });
   try {
     await room.connect(par.url, par.token);
+    fecharMidiaLocal();                 // a câmera do próprio celular (sem central) dá lugar à transmissão
     if (!soPosicao || sosAtivo) await room.localParticipant.setCameraEnabled(true);
     await room.localParticipant.setMicrophoneEnabled(true);   // microfone SEMPRE aberto (regra do SOS)
     const pub = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
@@ -886,7 +918,7 @@ async function iniciar(silencioso = false) {
   pararEscutaLocal();                 // transmitindo: quem ouve a senha é a central
   await sairEspera();
   avisoCentral = "";
-  ativo = true; $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
+  ativo = true; inicioT = Date.now(); $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho";
   if (!silencioso && !sosAtivo) falar("Iniciando transmissão.", 6, "inicio", 0);   // iPhone: libera o áudio com o toque
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
   await conectar();
@@ -895,7 +927,7 @@ async function iniciar(silencioso = false) {
     if (p.coords.accuracy > 35) return;
     velocidade = Math.max(0, p.coords.speed || 0); registrarVelocidade(velocidade);
     const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
-    enviar(g); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); if (!sosAtivo) somarPercurso(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h ·`;
+    enviar(g); if (semCentral) verificarRotaLocal(g.lat, g.lng); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); if (!sosAtivo) somarPercurso(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h ·`;
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
 }
 async function parar() {
@@ -903,6 +935,8 @@ async function parar() {
   ativo = false; clearTimeout(tentativaConexao); $("btIniciar").textContent = "▶ Iniciar transmissão"; $("btIniciar").className = "verde";
   clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
   try { await wakeLock?.release(); } catch {} wakeLock = null;
+  if (semCentral) fecharSemCentral();   // guarda o período sem central; vai à central quando ela for encontrada
+  pararGravLocal(); fecharMidiaLocal();
   await room?.disconnect(); room = null; ack = null; dets = null;
   analisador = null; vigiarGps(true);
   escutaLocal();                      // parado: o próprio celular passa a ouvir a senha
@@ -919,6 +953,7 @@ let sosAtivo = ls.get("anjo.sos") === "1", sosRep = null, sosOkT = 0;
 function marcaSos() { $("nome").textContent = par ? par.nome : "Câmera"; $("nome").style.color = ""; }   // em SOS, nenhuma marca no celular
 async function dispararSos(motivo) {
   const ja = sosAtivo;
+  if (!sosAtivo) sosOffEscondido = false;
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
   discreto(true); estadoTela("normal");
   if (!ja) console.log("SOS:", motivo);
@@ -1317,10 +1352,12 @@ function mostrarAlerta(m) {
 /* ---------- indicador e caixas ---------- */
 setInterval(() => {
   const recente = ack && Date.now() - ackT < 3500;
-  const [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", emEspera ? "Parado · a central pode reconectar" : "Parado"])
+  vigiarSemCentral();
+  let [cls, txt] = !ativo ? (avisoCentral ? ["mau", avisoCentral] : ["", emEspera ? "Parado · a central pode reconectar" : "Parado"])
     : recente && (ack.recebendo || soPosicao) ? ["ok", `● Protegido · central ok${ack.gravando ? " · ⏺ gravando" : ""}`]
     : recente ? ["warn", "● Central conectada, mas sem imagem"]
     : ["mau", room && room.state === "connected" ? "● Central desligada (servidor do notebook)" : "● Sem conexão — tentando de novo"];
+  if (semCentral) [cls, txt] = ["warn", `📴 Sem central · guardando no celular${gravLocal ? " · ⏺ gravando" : ""} · procurando…`];
   if (sosAtivo) {   // SOS: o celular não mostra nada; só a central sabe
     const fingeParado = $("btIniciar").textContent.startsWith("▶");
     $("link").className = "link"; $("link").textContent = fingeParado ? "Transmissão parada" : "● Transmitindo";
@@ -1469,7 +1506,7 @@ function faixaFrente(cls) {
     txt = "Trecho tranquilo" + (segura ? " · 🛡 rota mais segura" : "") + (soPosicao ? " · 📍 só posição" : "");
     if (rota && pos) { const falta = pos.distanceTo([rota.destino.lat, rota.destino.lng]); txt += ` · faltam ${textoDist(falta)}`; }
   } else {
-    tipo = "atencao"; txt = "Sem contato com a central — tentando de novo";
+    tipo = "atencao"; txt = semCentral ? "📴 Sem central: o celular guarda tudo e envia quando a encontrar" : "Sem contato com a central — tentando de novo";
   }
   f.className = "frente " + tipo; f.textContent = txt;
 }
@@ -1510,7 +1547,7 @@ function desenharHistorico() {
 // Modo só posição: sem câmera (economiza bateria e dados); GPS e microfone continuam.
 // Em SOS a câmera liga mesmo assim, e o microfone fica sempre aberto.
 async function ligarCamera(lig) {
-  if (!room || room.state !== "connected") return;
+  if (!room || room.state !== "connected") { if (streamLocal) { fecharMidiaLocal(); abrirMidiaLocal(); } return; }
   try {
     await room.localParticipant.setCameraEnabled(lig, lig ? { facingMode: frontal ? "user" : "environment", resolution: LivekitClient.VideoPresets.h540.resolution } : undefined);
     const p = room.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
@@ -1528,6 +1565,231 @@ $("btModo").onclick = async () => {
 };
 botaoModo();
 
+
+/* ---------- C65: sem central ----------
+   Transmitindo e sem resposta da central por 15 s, o celular passa a guardar tudo sozinho (percurso, rota, alertas
+   de "fora da rota" calculados aqui, SOS e, com ⏺ Gravar ligado ou em SOS, o vídeo) e continua procurando a central.
+   Quando a encontra, envia o que guardou (texto e vídeo por "data streams" do LiveKit) e volta ao normal. */
+function vigiarSemCentral() {
+  const sem = ativo && Date.now() - Math.max(ackT, inicioT) > 15000;
+  if (sem && !semCentral) entrarSemCentral();
+  else if (!sem && semCentral) { fecharSemCentral(); pararGravLocal(); fecharMidiaLocal(); falar("Central encontrada. Enviando o que foi guardado.", 3, "semcentral", 0); setTimeout(enviarFila, 2000); }
+  if (semCentral) {
+    if (!room || room.state !== "connected") abrirMidiaLocal();
+    if (gravLocal && (gravLocal.fonte.getTracks().every(t => t.readyState === "ended") || Date.now() - gravLocal.inicio > 300000)) pararGravLocal();   // trechos de 5 min
+    if ((gravar || sosAtivo) && !gravLocal) iniciarGravLocal();
+    else if (!gravar && !sosAtivo && gravLocal) pararGravLocal();
+    if (Date.now() - offSalvoT > 5000) { offSalvoT = Date.now(); ls.set("anjo.offAtual", JSON.stringify(passeioOff)); }
+  }
+  painelSosOff();
+  const n = filaOff().length, v = listaVideos().filter(x => !x.enviado).length;
+  const info = $("semCentralInfo");
+  if (info) info.textContent = semCentral ? "● Agora: sem central, guardando no celular." : (n || v) ? `Aguardando a central: ${n} período(s) e ${v} vídeo(s).` : "Nada pendente.";
+}
+function entrarSemCentral() {
+  semCentral = true; foraLocal = 0;
+  passeioOff = { id: "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), inicio: Date.now(), gps: [], alertas: [], sos: [], videos: [],
+                 rota: rota ? { coords: reduzirCoords(rota.coords, 400), modo: rota.modo, destino: rota.destino && rota.destino.nome } : null };
+  if (sosAtivo) passeioOff.sos.push({ t: Date.now(), motivo: ls.get("anjo.sosMotivo") || "", pos: posAtual() });
+  if (!sosAtivo) falar("Sem contato com a central. O celular vai guardar tudo e continuar procurando.", 2, "semcentral", 0);
+}
+function fecharSemCentral() {
+  semCentral = false;
+  if (passeioOff && (passeioOff.gps.length || passeioOff.alertas.length || passeioOff.sos.length || passeioOff.videos.length)) {
+    passeioOff.fim = Date.now(); const f = filaOff(); f.push(passeioOff); salvarFila(f.slice(-20));
+  }
+  passeioOff = null; ls.del("anjo.offAtual");
+}
+function posAtual() { const p = eu ? eu.getLatLng() : null; return p ? { lat: +p.lat.toFixed(6), lng: +p.lng.toFixed(6) } : null; }
+function guardarSemCentral(msg) {
+  const p = passeioOff; if (!p) return;
+  if (msg.tipo === "gps" && msg.lat != null) {
+    const u = p.gps[p.gps.length - 1];
+    const perto = u && L.latLng(u[0], u[1]).distanceTo([msg.lat, msg.lng]) < Math.max(4, (msg.acc || 0) * 0.5);
+    if (!perto || msg.t - u[3] > 15000 || sosAtivo) p.gps.push([+msg.lat.toFixed(6), +msg.lng.toFixed(6), Math.round(msg.acc || 0), msg.t]);
+    if (p.gps.length > 30000) p.gps = p.gps.filter((_, i) => i % 2 === 0);
+  } else if (msg.tipo === "rota") {
+    p.rota = msg.coords && msg.coords.length ? { coords: msg.coords, modo: msg.modo, destino: msg.destino } : null;
+  } else if (msg.tipo === "sos" && msg.ativo) {
+    const u = p.sos[p.sos.length - 1];
+    if (!u || Date.now() - u.t > 60000) p.sos.push({ t: Date.now(), motivo: msg.motivo || "", pos: posAtual() });
+  }
+}
+function distRotaM(lat, lng) {
+  if (!rota || !rota.coords || rota.coords.length < 2) return null;
+  const k = 111320, cx = Math.cos(lat * Math.PI / 180), c = rota.coords, passo = Math.max(1, Math.floor(c.length / 1500));
+  let m = Infinity;
+  for (let i = 0; i + passo < c.length; i += passo) {
+    const ax = (c[i][1] - lng) * k * cx, ay = (c[i][0] - lat) * k, bx = (c[i + passo][1] - lng) * k * cx, by = (c[i + passo][0] - lat) * k;
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    m = Math.min(m, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return m;
+}
+function verificarRotaLocal(lat, lng) {   // igual ao servidor: 3 leituras seguidas além de 50/70/90 m
+  const d = distRotaM(lat, lng); if (d == null) return;
+  const lim = { foot: 50, bike: 70, car: 90 }[rota.modo] || 50;
+  foraLocal = d > lim ? foraLocal + 1 : 0;
+  if (foraLocal >= 3 && Date.now() - foraAvisoT > 60000) {
+    foraAvisoT = Date.now();
+    const m = { cam: par.nome, alertas: ["FORA DA ROTA"], falas: ["Atenção: você saiu da rota."], grave: false, t: Date.now(), pos: { lat, lng }, virtual: "" };
+    mostrarAlerta(m);
+    if (passeioOff) passeioOff.alertas.push({ t: m.t, alertas: m.alertas, grave: false, pos: m.pos });
+  }
+}
+// mídia do próprio celular (só quando não há conexão com o servidor de vídeo)
+async function abrirMidiaLocal() {
+  if (streamLocal || abrindoMidia || !ativo || (room && room.state === "connected")) return;
+  abrindoMidia = true;
+  try {
+    const comVideo = !soPosicao || sosAtivo;
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true,
+      video: comVideo ? { facingMode: frontal ? "user" : "environment", width: { ideal: 960 }, height: { ideal: 540 } } : false });
+    if (!ativo || (room && room.state === "connected")) { s.getTracks().forEach(t => t.stop()); return; }
+    streamLocal = s; $("video").srcObject = s;
+    const a = s.getAudioTracks()[0]; if (a) ligarGrito(a);   // o SOS automático (grito) continua valendo
+  } catch (e) { console.log("mídia local", e); }
+  finally { abrindoMidia = false; }
+}
+function fecharMidiaLocal() {
+  if (!streamLocal) return;
+  if (gravLocal && gravLocal.fonte === streamLocal) pararGravLocal();
+  streamLocal.getTracks().forEach(t => t.stop()); streamLocal = null;
+  if ($("video").srcObject && !$("video").srcObject.active) $("video").srcObject = null;
+}
+// gravação no celular: pedaços de 4 s no IndexedDB (não se perdem se a página fechar)
+function fonteGravacao() {
+  if (room && room.state === "connected") {
+    const R = LivekitClient, lp = room.localParticipant;
+    const ts = [lp.getTrackPublication(R.Track.Source.Camera), lp.getTrackPublication(R.Track.Source.Microphone)]
+      .map(p => p && p.track && p.track.mediaStreamTrack).filter(t => t && t.readyState === "live");
+    return ts.length ? new MediaStream(ts) : null;
+  }
+  return streamLocal;
+}
+function iniciarGravLocal() {
+  if (gravLocal || typeof MediaRecorder === "undefined") return;
+  const fonte = fonteGravacao(); if (!fonte) return;
+  const mime = ["video/mp4", "video/webm;codecs=vp8,opus", "video/webm"].find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || "";
+  let mr;
+  try { mr = new MediaRecorder(fonte, mime ? { mimeType: mime, videoBitsPerSecond: 1000000 } : { videoBitsPerSecond: 1000000 }); }
+  catch (e) { console.log("gravador", e); return; }
+  const g = { id: "g" + Date.now().toString(36), inicio: Date.now(), mime: (mr.mimeType || mime || "video/mp4").split(";")[0], n: 0, bytes: 0, sos: sosAtivo, fonte, mr };
+  gravLocal = g;
+  mr.ondataavailable = ev => { if (ev.data && ev.data.size) { idbPut(g.id, g.n++, ev.data); g.bytes += ev.data.size; } };
+  mr.onstop = () => { g.fim = Date.now(); registrarVideo(g); if (gravLocal === g) gravLocal = null; };
+  try { mr.start(4000); } catch (e) { console.log("gravador", e); gravLocal = null; }
+}
+function pararGravLocal() { const g = gravLocal; gravLocal = null; if (g) try { if (g.mr.state !== "inactive") g.mr.stop(); } catch {} }
+let idb = null;
+function abrirIdb() {
+  if (!idb) idb = new Promise((ok, falha) => { const r = indexedDB.open("anjo", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("pedacos"); r.onsuccess = () => ok(r.result); r.onerror = () => falha(r.error); });
+  return idb;
+}
+async function idbPut(gid, n, blob) {
+  try { const db = await abrirIdb(); db.transaction("pedacos", "readwrite").objectStore("pedacos").put(blob, gid + "_" + String(n).padStart(5, "0")); }
+  catch (e) { console.log("idb", e); }
+}
+async function idbVideo(gid) {
+  const db = await abrirIdb();
+  return new Promise((ok, falha) => { const r = db.transaction("pedacos").objectStore("pedacos").getAll(IDBKeyRange.bound(gid + "_", gid + "_￿"));
+    r.onsuccess = () => ok(r.result); r.onerror = () => falha(r.error); });
+}
+async function idbApagar(gid) { try { const db = await abrirIdb(); db.transaction("pedacos", "readwrite").objectStore("pedacos").delete(IDBKeyRange.bound(gid + "_", gid + "_￿")); } catch {} }
+function listaVideos() { try { return JSON.parse(ls.get("anjo.videos") || "[]"); } catch { return []; } }
+function salvarVideos(l) { ls.set("anjo.videos", JSON.stringify(l.slice(-50))); desenharVideos(); }
+function registrarVideo(g) {
+  if (!g.bytes) return;
+  const l = listaVideos(); l.push({ id: g.id, inicio: g.inicio, fim: g.fim, mime: g.mime, bytes: g.bytes, sos: g.sos, enviado: false });
+  salvarVideos(l);
+  if (passeioOff) passeioOff.videos.push(g.id);
+  else { const f = filaOff(); if (f.length) { f[f.length - 1].videos = [...(f[f.length - 1].videos || []), g.id]; salvarFila(f); } }
+}
+function nomeVideo(v) { return new Date(v.inicio - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "_") + "_" + v.id + (v.sos ? "_SOS" : "") + (/mp4/.test(v.mime) ? ".mp4" : ".webm"); }
+async function baixarVideo(v) {
+  const pedacos = await idbVideo(v.id);
+  if (!pedacos.length) { alertaInfo("Este vídeo já não está no celular."); return; }
+  const url = URL.createObjectURL(new Blob(pedacos, { type: v.mime })), a = document.createElement("a");
+  a.href = url; a.download = nomeVideo(v); document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+function alertaInfo(t) { $("semCentralInfo").textContent = t; }
+function desenharVideos() {
+  const caixa = $("listaVideos"); if (!caixa) return;
+  caixa.innerHTML = "";
+  listaVideos().filter(v => !v.enviado).slice(-10).reverse().forEach(v => {
+    const el = document.createElement("div"); el.className = "video-item";
+    const ini = new Date(v.inicio).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    el.innerHTML = "<span></span><button>⬇ Baixar</button>";
+    el.querySelector("span").textContent = `${v.sos ? "🆘 " : "⏺ "}${ini} · ${Math.max(1, Math.round((v.fim - v.inicio) / 60000))} min · ${(v.bytes / 1e6).toFixed(1)} MB · aguardando a central`;
+    el.querySelector("button").onclick = () => baixarVideo(v);
+    caixa.appendChild(el);
+  });
+}
+// fila do que foi guardado sem central
+function filaOff() { try { return JSON.parse(ls.get("anjo.filaOff") || "[]"); } catch { return []; } }
+function salvarFila(f) {
+  try { localStorage.setItem("anjo.filaOff", JSON.stringify(f)); }
+  catch { f.forEach(p => p.gps = p.gps.filter((_, i) => i % 2 === 0)); ls.set("anjo.filaOff", JSON.stringify(f)); }   // memória cheia: metade dos pontos
+}
+function temPendencia() { return filaOff().length > 0 || listaVideos().some(v => !v.enviado); }
+function esperarMsg(teste, ms) {
+  return new Promise(ok => { const w = { teste, ok }; esperas.push(w);
+    setTimeout(() => { const i = esperas.indexOf(w); if (i >= 0) { esperas.splice(i, 1); ok(false); } }, ms); });
+}
+async function enviarFila() {
+  if (enviandoFila || semCentral || !room || room.state !== "connected" || !(ack && Date.now() - ackT < 5000)) return;
+  enviandoFila = true; ultimaFila = Date.now();
+  let enviados = 0;
+  try {
+    for (const p of filaOff()) {
+      await room.localParticipant.sendText(JSON.stringify(p), { topic: "anjo_offline", destinationIdentities: [CENTRAL] });
+      if (!await esperarMsg(m => m.tipo === "offline_ok" && m.id === p.id, 20000)) break;
+      salvarFila(filaOff().filter(x => x.id !== p.id)); enviados++;
+    }
+    for (const v of listaVideos().filter(x => !x.enviado)) {
+      if (semCentral || !room || room.state !== "connected") break;
+      const pedacos = await idbVideo(v.id);
+      const marcar = () => { salvarVideos(listaVideos().map(x => x.id === v.id ? { ...x, enviado: true } : x)); idbApagar(v.id); };
+      if (!pedacos.length) { marcar(); continue; }
+      const nome = nomeVideo(v), arq = new File(pedacos, nome, { type: v.mime });
+      alertaInfo(`📤 Enviando vídeo gravado sem central (${(arq.size / 1e6).toFixed(1)} MB)…`);
+      await room.localParticipant.sendFile(arq, { topic: "anjo_video", mimeType: v.mime, destinationIdentities: [CENTRAL], compress: false,
+        onProgress: x => alertaInfo(`📤 Enviando vídeo à central… ${Math.round(x * 100)}%`) });
+      if (!await esperarMsg(m => m.tipo === "offline_video_ok" && m.nome === nome, 60000)) break;
+      marcar(); enviados++;   // a central guardou: apaga do celular para liberar espaço
+    }
+  } catch (e) { console.log("fila", e); }
+  finally {
+    enviandoFila = false; desenharVideos();
+    if (enviados) { alertaInfo(`✓ ${enviados} envio(s) feitos à central.`); falar("O que foi guardado sem a central já foi enviado.", 4, "fila", 0); }
+  }
+}
+// SOS sem central: o próprio assinante pede ajuda (o SOS só termina pela central, quando ela voltar)
+function numeroContato() {
+  let n = (ls.get("anjo.contato") || "").replace(/\D/g, "");
+  if (n.length === 10 || n.length === 11) n = "55" + n;
+  return n;
+}
+function painelSosOff() {
+  const mostra = sosAtivo && semCentral && !sosOffEscondido;
+  $("sosOff").style.display = mostra ? "block" : "none";
+  if (!mostra) return;
+  const p = posAtual(), hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const txt = `🆘 Preciso de ajuda. ${p ? `Minha posição agora (${hora}): https://maps.google.com/?q=${p.lat},${p.lng}` : "Estou sem GPS no momento."} — Anjo da Guarda`;
+  const n = numeroContato();
+  $("sosZap").href = n ? `https://wa.me/${n}?text=${encodeURIComponent(txt)}` : `https://wa.me/?text=${encodeURIComponent(txt)}`;
+  $("sosSms").href = `sms:${n ? "+" + n : ""}&body=${encodeURIComponent(txt)}`;
+}
+$("sosOffFechar").onclick = () => { sosOffEscondido = true; painelSosOff(); };
+$("contatoSos").value = ls.get("anjo.contato") || "";
+$("contatoSos").addEventListener("change", () => ls.set("anjo.contato", $("contatoSos").value.trim()));
+// página fechada no meio de um período sem central: vai para a fila
+(() => { const a = ls.get("anjo.offAtual"); if (a) { try { const p = JSON.parse(a); if (p && p.id) { p.fim = p.fim || Date.now(); const f = filaOff(); if (!f.some(x => x.id === p.id)) { f.push(p); salvarFila(f); } } } catch {} ls.del("anjo.offAtual"); } })();
+desenharVideos();
+
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
   pedirSensores(); prepararAudio();
@@ -1536,6 +1798,7 @@ $("btIniciar").onclick = async () => {
 $("btGravar").onclick = () => { gravar = !gravar; ls.set("anjo.gravar", gravar ? "1" : "0"); botaoGravar(); enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); };
 async function trocarCamera(paraFrontal) {
   frontal = paraFrontal;
+  if (streamLocal) { fecharMidiaLocal(); await abrirMidiaLocal(); return; }   // sem central: a câmera é do próprio celular
   const R = LivekitClient, pub = room?.localParticipant.getTrackPublication(R.Track.Source.Camera);
   try { await pub.videoTrack.restartTrack({ facingMode: frontal ? "user" : "environment" }); }
   catch (e) {   // reserva: desliga e religa a câmera já com o lado certo
