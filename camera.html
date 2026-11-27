@@ -261,7 +261,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C79";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C80";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -294,7 +294,7 @@ let resetEnviadoT = 0;
 function enviarResetPendente() {
   let p = null; try { p = JSON.parse(ls.get("anjo.sosResetPendente") || "null"); } catch {}
   if (!p || sosAtivo) return;
-  if (Date.now() - p.t > 10 * 60000) { ls.del("anjo.sosResetPendente"); return; }   // desiste depois de 10 min
+  if (Date.now() - p.t > 24 * 3600000) { ls.del("anjo.sosResetPendente"); return; }   // C80: vale até a central voltar (até 24 h)
   if (!room || room.state !== "connected" || Date.now() - resetEnviadoT < 3000) return;
   resetEnviadoT = Date.now(); enviar({ tipo: "sos_reset", motivo: p.motivo });
 }
@@ -1400,12 +1400,19 @@ async function entrarEspera() {
   if (espera) return;
   const R = LivekitClient;
   espera = new R.Room({ adaptiveStream:false, dynacast:false });
-  const avisar = () => espera?.localParticipant.publishData(cod.encode(JSON.stringify({ tipo:"espera" })),
-    { reliable:true, topic:"anjo", destinationIdentities:[CENTRAL] }).catch(() => {});
+  const avisar = () => {
+    espera?.localParticipant.publishData(cod.encode(JSON.stringify({ tipo:"espera" })),
+      { reliable:true, topic:"anjo", destinationIdentities:[CENTRAL] }).catch(() => {});
+    // C80: reset do SOS feito no celular sem contato: vai também pela conexão de espera (página parada)
+    let p = null; try { p = JSON.parse(ls.get("anjo.sosResetPendente") || "null"); } catch {}
+    if (p && !sosAtivo) espera?.localParticipant.publishData(cod.encode(JSON.stringify({ tipo:"sos_reset", motivo: p.motivo })),
+      { reliable:true, topic:"anjo", destinationIdentities:[CENTRAL] }).catch(() => {});
+  };
   espera.on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) avisar(); })
         .on(R.RoomEvent.DataReceived, (payload, p, k, topico) => {
           if (topico !== "anjo") return;
           let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
+          if (m.tipo === "sos_fim") { ls.del("anjo.sosResetPendente"); return; }
           if (m.tipo === "reconectar") { falar("A central reconectou. Iniciando transmissão.", 1, "reconectar", 0); iniciar(); }
         })
         .on(R.RoomEvent.Disconnected, () => { clearInterval(esperaHb); espera = null; if (emEspera) setTimeout(entrarEspera, 5000); });
