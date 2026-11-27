@@ -233,6 +233,7 @@
         </div>
         <button id="btOuvir" class="ouvir">Ouvindo</button>
         <div id="ouvirInfo" class="sub"></div>
+        <div id="vozCelInfo" class="sub"></div>
         <label class="regua">🎙 Sensibilidade da senha falada: <b id="vozSensibTxt">5</b>/10
           <input id="vozSensib" type="range" min="1" max="10" step="1" value="5"></label>
         <div class="sub">Puxe para a direita se a central não ouvir o seu grito; para a esquerda se disparar à toa. Vale transmitindo (quem ouve é a central).</div>
@@ -261,7 +262,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C81";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C82";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -304,6 +305,9 @@ let silencioMic = 0, ultimoReparoMic = 0;
 let modoPlacas = ls.get("anjo.placasModo") === "1";
 const resolucao = () => (modoPlacas ? LivekitClient.VideoPresets.h1080 : LivekitClient.VideoPresets.h540).resolution;
 const codificacao = () => ({ maxBitrate: modoPlacas ? 2500000 : 900000, maxFramerate: 15 });
+// C82: senha falada reconhecida NO CELULAR também transmitindo (vosk-browser, offline), sobre o mesmo microfone da
+// transmissão (sem disputar o microfone). O modelo (~30 MB) vem da central pelo LiveKit uma vez e fica no celular.
+let vozModelo = null, vozRec = null, vozNos = null, vozTrilha = null, vozEstado = "", vozPedidoT = 0, vozRecentes = [], vozIniciando = false;
 let sosTesteLig = ls.get("anjo.sosTeste") !== "0", alarmeSos = null;
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
@@ -896,6 +900,7 @@ async function conectarUmaVez() {
     // C76: sem supressão de ruído no microfone: no Android ela "come" o grito e o começo das palavras da senha falada
     audioCaptureDefaults: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
     publishDefaults: { simulcast:false, videoEncoding: codificacao() } });
+  try { receberModeloVoz(este); } catch (e) { console.log(e); }
   room = este;
   room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar: gravar || sosAtivo }))
       .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota(); } })
@@ -986,7 +991,7 @@ async function parar() {
   clearInterval(hb); if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null;
   try { await wakeLock?.release(); } catch {} wakeLock = null;
   if (semCentral) fecharSemCentral();   // guarda o período sem central; vai à central quando ela for encontrada
-  pararGravLocal(); fecharMidiaLocal();
+  pararGravLocal(); fecharMidiaLocal(); pararVozCelular();
   await room?.disconnect(); room = null; ack = null; dets = null;
   analisador = null; vigiarGps(true);
   escutaLocal();                      // parado: o próprio celular passa a ouvir a senha
@@ -1301,6 +1306,7 @@ async function repararMic() {
   } catch (e) { console.log("reparar microfone", e); }
 }
 function ligarGrito(mediaTrack) {
+  setTimeout(() => vozCelular(mediaTrack), 0);   // C82: a senha falada também é ouvida no celular
   try {
     if (!mediaTrack) return;
     prepararAudio(); if (!ctxAudio) return;
@@ -1800,8 +1806,11 @@ function iniciarGravLocal() {
 function pararGravLocal() { const g = gravLocal; gravLocal = null; if (g) try { if (g.mr.state !== "inactive") g.mr.stop(); } catch {} }
 let idb = null;
 function abrirIdb() {
-  if (!idb) idb = new Promise((ok, falha) => { const r = indexedDB.open("anjo", 1);
-    r.onupgradeneeded = () => r.result.createObjectStore("pedacos"); r.onsuccess = () => ok(r.result); r.onerror = () => falha(r.error); });
+  if (!idb) idb = new Promise((ok, falha) => { const r = indexedDB.open("anjo", 2);
+    r.onupgradeneeded = () => { const db = r.result;
+      if (!db.objectStoreNames.contains("pedacos")) db.createObjectStore("pedacos");
+      if (!db.objectStoreNames.contains("modelo")) db.createObjectStore("modelo"); };   // C82: modelo de voz do celular
+    r.onsuccess = () => ok(r.result); r.onerror = () => falha(r.error); });
   return idb;
 }
 async function idbPut(gid, n, blob) {
@@ -1984,8 +1993,99 @@ rotuloPlacas();
   const r = $("vozSensib"), v = +(ls.get("anjo.vozSensib") || 5);
   r.value = v; $("vozSensibTxt").textContent = v;
   r.addEventListener("input", () => { $("vozSensibTxt").textContent = r.value; });
-  r.addEventListener("change", () => { ls.set("anjo.vozSensib", r.value); enviar({ tipo: "voz_sensib", nivel: +r.value }); });
+  r.addEventListener("change", () => { ls.set("anjo.vozSensib", r.value); enviar({ tipo: "voz_sensib", nivel: +r.value });
+    try { if (vozNos) vozNos.ganho.gain.value = Math.pow(1.25, +r.value - 5) * 1.5; } catch {} });
 })();
+
+
+/* ---------- C82: senha falada processada no celular ---------- */
+async function idbModelo(valor) {
+  const db = await abrirIdb();
+  return new Promise((ok, falha) => {
+    const tx = db.transaction("modelo", valor === undefined ? "readonly" : "readwrite"), st = tx.objectStore("modelo");
+    const r = valor === undefined ? st.get("pt") : st.put(valor, "pt");
+    r.onsuccess = () => ok(r.result); r.onerror = () => falha(r.error);
+  });
+}
+function infoVoz(t) { vozEstado = t; const el = $("vozCelInfo"); if (el) el.textContent = t; }
+async function carregarVosk() {
+  if (window.Vosk) return;
+  await new Promise((ok, falha) => { const sc = document.createElement("script");
+    sc.src = "https://cdn.jsdelivr.net/npm/vosk-browser@0.0.8/dist/vosk.js"; sc.onload = ok; sc.onerror = falha; document.head.appendChild(sc); });
+}
+function pararVozCelular() {
+  try { if (vozNos) { vozNos.fonte.disconnect(); vozNos.ganho.disconnect(); vozNos.proc.disconnect(); vozNos.mudo.disconnect(); } } catch {}
+  try { vozRec && vozRec.remove(); } catch {}
+  vozNos = null; vozRec = null; vozTrilha = null;
+}
+function grade(frase) {
+  const sem = w => w.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const pal = new Set();
+  for (const w of (frase || "").toLowerCase().match(/[a-zà-ÿ]+/g) || []) { pal.add(w); pal.add(sem(w)); }
+  if ([...pal].some(w => sem(w) === "ladrao" || w === "pega")) { pal.add("ladrão"); pal.add("pega"); }
+  return JSON.stringify([...pal, "[unk]"]);
+}
+async function vozCelular(track) {
+  const frase = ls.get("anjo.fraseLocal");
+  if (!track || !frase || !ouvirLocal || !ativo) { pararVozCelular(); if (!frase && ativo) infoVoz("🎙 No celular: cadastre a senha para ele ouvir também."); return; }
+  if (vozTrilha === track && vozRec) return;
+  if (vozIniciando) return;
+  vozIniciando = true;
+  try {
+    let pacote = await idbModelo().catch(() => null);
+    if (!pacote) {
+      if (Date.now() - vozPedidoT > 120000 && room && room.state === "connected") {
+        vozPedidoT = Date.now(); enviar({ tipo: "modelo_voz_pedir" });
+        infoVoz("🎙 No celular: recebendo o reconhecedor de voz da central (~30 MB, uma vez só)…");
+      }
+      return;
+    }
+    if (!vozModelo) {
+      infoVoz("🎙 No celular: preparando o reconhecedor…");
+      await carregarVosk();
+      try { indexedDB.deleteDatabase("/vosk"); } catch {}   // o vosk-browser extrai o modelo a cada carga: não acumular
+      vozModelo = await Vosk.createModel(URL.createObjectURL(pacote));
+    }
+    pararVozCelular();
+    prepararAudio(); if (!ctxAudio) return;
+    const rec = new vozModelo.KaldiRecognizer(ctxAudio.sampleRate, grade(frase));
+    const confere = (texto, parcial) => {
+      texto = (texto || "").replace(/\[unk\]/g, " ").trim(); if (!texto) return;
+      const agora = Date.now();
+      vozRecentes = vozRecentes.filter(x => agora - x.t < 6000);
+      const junto = vozRecentes.map(x => x.texto).concat([texto]).join(" ");
+      if (!parcial) vozRecentes.push({ t: agora, texto });
+      infoVoz("🎙 No celular ouvindo · entendeu: “" + texto + "”");
+      if (!sosAtivo && ouvirLocal && bateFrase(junto, ls.get("anjo.fraseLocal") || "")) {
+        vozRecentes = []; dispararSos("senha falada (celular)");
+      }
+    };
+    rec.on("result", m => confere(m.result && m.result.text, false));
+    rec.on("partialresult", m => confere(m.result && m.result.partial, true));
+    const fonte = ctxAudio.createMediaStreamSource(new MediaStream([track]));
+    const ganho = ctxAudio.createGain();
+    ganho.gain.value = Math.pow(1.25, (+(ls.get("anjo.vozSensib") || 5)) - 5) * 1.5;   // régua da senha (1 a 10)
+    const proc = ctxAudio.createScriptProcessor(4096, 1, 1), mudo = ctxAudio.createGain(); mudo.gain.value = 0;
+    proc.onaudioprocess = ev => { try { if (ouvirLocal && !sosAtivo) rec.acceptWaveform(ev.inputBuffer); } catch {} };
+    fonte.connect(ganho); ganho.connect(proc); proc.connect(mudo); mudo.connect(ctxAudio.destination);
+    vozRec = rec; vozNos = { fonte, ganho, proc, mudo }; vozTrilha = track;
+    infoVoz("🎙 No celular: ouvindo a senha (processada aqui, sem internet)");
+  } catch (e) { console.log("voz no celular", e); infoVoz("🎙 No celular: não deu para ligar o reconhecedor (" + (e.message || e) + ")"); }
+  finally { vozIniciando = false; }
+}
+function receberModeloVoz(r) {
+  r.registerByteStreamHandler("anjo_modelo_voz", async (reader) => {
+    try {
+      infoVoz("🎙 No celular: recebendo o reconhecedor de voz…");
+      reader.onProgress = x => { if (x != null) infoVoz(`🎙 No celular: recebendo o reconhecedor de voz… ${Math.round(x * 100)}%`); };
+      const partes = await reader.readAll();
+      await idbModelo(new Blob(partes, { type: "application/gzip" }));
+      infoVoz("🎙 No celular: reconhecedor recebido.");
+      const mic = room && room.localParticipant.getTrackPublication(LivekitClient.Track.Source.Microphone);
+      vozCelular(mic && mic.audioTrack && mic.audioTrack.mediaStreamTrack);
+    } catch (e) { console.log("modelo de voz", e); infoVoz("🎙 No celular: falhou ao receber o reconhecedor; tento de novo depois."); vozPedidoT = 0; }
+  });
+}
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
