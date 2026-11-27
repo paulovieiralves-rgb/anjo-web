@@ -115,6 +115,8 @@
   #abas button { flex:1; margin:0; border-radius:0; background:none; color:var(--sub); font-size:12px; font-weight:600; padding:8px 0 10px; }
   #abas button span { display:block; font-size:20px; }
   #abas button.sel { color:#fff; }
+  #telaEscura { position:fixed; inset:0; background:#000; z-index:3000; display:none; align-items:flex-end; justify-content:center;
+    padding-bottom:calc(30px + env(safe-area-inset-bottom)); color:#334155; font-size:13px; }
   #sosOff { position:fixed; left:10px; right:10px; bottom:calc(12px + env(safe-area-inset-bottom)); z-index:2500; background:#450a0a;
     border:2px solid #ef4444; border-radius:14px; padding:12px; box-shadow:0 4px 20px #000c; }
   #sosOff a.botao { display:block; text-align:center; text-decoration:none; color:#fff; border-radius:10px; padding:14px; font-weight:700; margin-top:8px; background:#334155; }
@@ -140,6 +142,7 @@
   </header>
   <button id="btAtualizar" class="verde" style="display:none">⟳ Versão nova disponível — toque para atualizar</button>
   <div id="alerta"></div>
+  <div id="telaEscura">● toque para ver o mapa</div>
   <!-- C65: SOS sem contato com a central — o próprio assinante pede ajuda (WhatsApp/SMS/190) -->
   <div id="sosOff" style="display:none">
     <b>🆘 Sem contato com a central</b>
@@ -177,6 +180,8 @@
       <b>Transmissão</b>
       <div class="linha"><button id="btModo">📷 Com câmera</button><button id="btGravar">⏺ Gravar</button><button id="btCam" class="pequeno">🔄</button></div>
       <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
+      <button id="btEscura">🌑 Tela escura transmitindo: ligada</button>
+      <div class="sub">Transmitindo, a tela fica preta depois de 30 s sem toque (discreto e gasta menos bateria); a transmissão continua. Um toque volta.</div>
       <button id="btNovoPasseio">🧹 Novo passeio (limpa o mapa)</button>
     </div>
     <div class="cartao" id="cartaoSemCentral">
@@ -239,7 +244,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C66";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C67";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -267,6 +272,8 @@ let picoG = 0, picoT = 0;
 let semCentral = false, passeioOff = null, streamLocal = null, abrindoMidia = false, gravLocal = null, enviandoFila = false,
     ultimaFila = 0, inicioT = 0, foraLocal = 0, foraAvisoT = 0, sosOffEscondido = false, offSalvoT = 0;
 const esperas = [];
+// C67: tela escura na transmissão normal (como se estivesse em segundo plano)
+let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
 let LIM_TRANCO = sensib.tranco, LIM_GRITO_DB = sensib.gritoDb, LIM_GRITO_HZ = sensib.gritoHz;   // modo só posição (C39) e último alerta (faixa "à frente")
 
 /* ---------- pareamento: o QR abre esta página com os dados no "#" (não vai para nenhum servidor) ---------- */
@@ -1340,6 +1347,7 @@ function resumo(c) {
   falar(partes.length ? "À frente: " + partes.join(", ") : "Rua vazia", 5, "resumo", 45000);
 }
 function mostrarAlerta(m) {
+  try { if (!sosAtivo) acordarTela(); } catch {}
   const el = $("alerta");
   el.textContent = "ALERTA" + (m.virtual ? " · " + m.virtual : "") + ": " + m.alertas.join(" | ") + (m.cam !== par.nome ? ` (${m.cam})` : "");
   el.style.background = m.alertas.every(a => ATENCAO.has(a)) ? "#a16207" : "#dc2626";
@@ -1797,6 +1805,23 @@ $("contatoSos").addEventListener("change", () => ls.set("anjo.contato", $("conta
 // página fechada no meio de um período sem central: vai para a fila
 (() => { const a = ls.get("anjo.offAtual"); if (a) { try { const p = JSON.parse(a); if (p && p.id) { p.fim = p.fim || Date.now(); const f = filaOff(); if (!f.some(x => x.id === p.id)) { f.push(p); salvarFila(f); } } } catch {} ls.del("anjo.offAtual"); } })();
 desenharVideos();
+
+
+/* ---------- C67: tela escura transmitindo ----------
+   Transmitindo (fora do SOS, que tem a sua própria tela), 30 s sem toque deixam a tela preta: a transmissão, o GPS,
+   a voz e os alertas continuam. Um toque volta. Alerta novo acende a tela. A tela continua ligada (o navegador
+   pausaria a câmera se ela apagasse); o preto gasta pouca bateria em telas OLED/AMOLED. */
+function telaEscura(lig) { $("telaEscura").style.display = lig ? "flex" : "none"; }
+function acordarTela() { toqueTela = Date.now(); telaEscura(false); }
+["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, () => { toqueTela = Date.now(); }, true));
+$("telaEscura").addEventListener("pointerdown", e => { e.preventDefault(); e.stopPropagation(); acordarTela(); });
+setInterval(() => {
+  const deve = escuraLig && ativo && !sosAtivo && Date.now() - toqueTela > 30000;
+  if (deve !== ($("telaEscura").style.display === "flex")) telaEscura(deve);
+}, 1000);
+function rotuloEscura() { $("btEscura").textContent = "🌑 Tela escura transmitindo: " + (escuraLig ? "ligada" : "desligada"); }
+$("btEscura").onclick = () => { escuraLig = !escuraLig; ls.set("anjo.escura", escuraLig ? "1" : "0"); rotuloEscura(); };
+rotuloEscura();
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
