@@ -215,7 +215,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C62";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C63";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -713,42 +713,56 @@ const Reconhecedor = window.SpeechRecognition || window.webkitSpeechRecognition;
 // microfone e o ditado do destino falhava; agora a escuta da senha pausa durante o ditado e volta depois.
 let ditando = false;
 function ligarMicrofone(botao, input) {
-  const teclado = () => { input.focus(); $("rotaInfo").textContent = "🎤 Use o microfone do teclado do iPhone para ditar."; };
+  const teclado = () => { input.focus(); $("rotaInfo").textContent = "🎤 Toque no microfone do teclado do iPhone e fale o endereço."; };
   if (!Reconhecedor) { botao.onclick = teclado; return; }
   let rec = null;
+  const qual = () => input.id === "rotaDe" ? "Origem" : "Destino";
+  function iniciar(tentativa) {
+    const r = new Reconhecedor(); rec = r;
+    r.lang = "pt-BR"; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
+    botao.classList.add("ouvindo"); botao.textContent = "⏺";
+    $("rotaInfo").textContent = `🎤 Pode falar o ${qual() === "Origem" ? "local de origem" : "destino"}…`;
+    let errou = null, texto = "";
+    r.onaudiostart = () => { $("rotaInfo").textContent = "🎤 Ouvindo… fale o endereço"; };
+    r.onresult = ev => {
+      texto = Array.from(ev.results).map(x => x[0].transcript).join(" ").trim();
+      if (texto) { input.value = texto; input.escolha = null; $("rotaInfo").textContent = "🎤 " + texto; }
+    };
+    r.onerror = ev => { errou = ev.error; };
+    r.onend = () => {
+      if (rec !== r) return;
+      rec = null;
+      const dito = (texto || input.value).trim();
+      // C63: microfone ainda ocupado pela escuta da senha → tenta mais uma vez, depois de uma pausa
+      if (!texto && tentativa < 2 && (errou === "aborted" || errou === "audio-capture" || errou === "no-speech" && tentativa === 0)) {
+        setTimeout(() => iniciar(tentativa + 1), 700); return;
+      }
+      botao.classList.remove("ouvindo"); botao.textContent = "🎤"; ditando = false;
+      if (dito.length >= 3) {                              // aceita o que ouviu, mesmo que o navegador acuse erro no fim
+        input.value = dito; input.escolha = null;
+        $("rotaInfo").textContent = `🎤 Entendi — ${qual()}: “${dito}”. Escolha na lista.`;
+        falar(`${qual()}: ${dito}. Escolha na lista.`, 2, "voz-" + input.id, 0);
+        try { input.buscarAgora(); } catch {}
+      } else if (errou === "not-allowed" || errou === "service-not-allowed") {
+        $("rotaInfo").textContent = "⚠ Libere o microfone e o reconhecimento de fala: Ajustes do iPhone › Safari › Microfone, e Ajustes › Siri (Ditado ativado).";
+      } else if (errou === "audio-capture" || errou === "aborted") {
+        teclado();                                        // microfone ocupado (ex.: transmitindo): ditado do teclado
+      } else {
+        $("rotaInfo").textContent = "⚠ Não ouvi o endereço. Toque no 🎤 e fale logo depois do sinal (ou use o microfone do teclado).";
+      }
+      setTimeout(() => { try { if (!ativo) escutaLocal(); } catch {} }, 800);   // volta a ouvir a senha
+    };
+    try { r.start(); } catch (e) {
+      rec = null;
+      if (tentativa < 2) { setTimeout(() => iniciar(tentativa + 1), 700); return; }
+      botao.classList.remove("ouvindo"); botao.textContent = "🎤"; ditando = false; teclado();
+    }
+  }
   botao.onclick = () => {
     if (rec) { try { rec.stop(); } catch {} return; }
     ditando = true;
     try { pararEscutaLocal(); } catch {}                     // libera o reconhecimento de voz
-    const r = new Reconhecedor(); rec = r;
-    r.lang = "pt-BR"; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
-    botao.classList.add("ouvindo"); botao.textContent = "⏺";
-    $("rotaInfo").textContent = `🎤 Pode falar o ${input.id === "rotaDe" ? "local de origem" : "destino"}…`;
-    let errou = null;
-    r.onresult = ev => {
-      let texto = "";
-      for (const x of ev.results) texto += x[0].transcript;
-      input.value = texto.trim(); input.escolha = null;
-    };
-    r.onerror = ev => { errou = ev.error; };
-    r.onend = () => {
-      botao.classList.remove("ouvindo"); botao.textContent = "🎤"; rec = null; ditando = false;
-      const dito = input.value.trim();
-      if (dito.length >= 3 && !errou) {
-        const qual = input.id === "rotaDe" ? "Origem" : "Destino";
-        $("rotaInfo").textContent = `🎤 Entendi — ${qual}: “${dito}”. Confira na lista e toque em ✔ Usar.`;
-        falar(`${qual}: ${dito}. Confira na lista e toque em usar.`, 2, "voz-" + input.id, 0);
-        input.buscarAgora();
-      } else if (errou === "not-allowed" || errou === "service-not-allowed") {
-        $("rotaInfo").textContent = "⚠ Permita o microfone e o reconhecimento de fala para o site (Ajustes do iPhone › Safari/Chrome › Microfone).";
-      } else if (errou === "audio-capture" || errou === "aborted") {
-        teclado();                                        // microfone ocupado (ex.: transmitindo): usa o ditado do teclado
-      } else {
-        $("rotaInfo").textContent = "⚠ Não entendi. Toque no 🎤 e fale de novo (ou use o microfone do teclado).";
-      }
-      setTimeout(() => { try { if (!ativo) escutaLocal(); } catch {} }, 500);   // volta a ouvir a senha
-    };
-    try { r.start(); } catch (e) { botao.classList.remove("ouvindo"); botao.textContent = "🎤"; rec = null; ditando = false; teclado(); }
+    iniciar(0);   // começa já, dentro do toque (o iPhone exige); se o microfone ainda estiver preso, tenta de novo
   };
 }
 ligarMicrofone($("micDe"), $("rotaDe"));
