@@ -253,7 +253,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C72";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C73";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -888,6 +888,9 @@ async function conectarUmaVez() {
         let m; try { m = JSON.parse(dec.decode(payload)); } catch { return; }
         for (const w of [...esperas]) if (w.teste(m)) { esperas.splice(esperas.indexOf(w), 1); w.ok(true); }
         if (m.tipo === "ack" && !semCentral && !enviandoFila && Date.now() - ultimaFila > 30000 && temPendencia()) setTimeout(enviarFila, 1500);
+        if (m.tipo === "ack" && ls.get("anjo.sosResetPendente") && !sosAtivo) {
+          enviar({ tipo: "sos_reset", motivo: ls.get("anjo.sosResetPendente") }); ls.del("anjo.sosResetPendente");
+        }
         if (m.tipo === "ack") { ack = m; ackT = Date.now(); camVirtualNoMapa(m.virtual, m.virtual_pos); if (m.continuo !== (gravar || sosAtivo)) enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); resumo(m.contagem || {}); }
         else if (m.tipo === "deteccoes" && m.cam === par.nome) { dets = m; detsT = Date.now(); }
         else if (m.tipo === "alerta") mostrarAlerta(m);
@@ -978,6 +981,7 @@ async function dispararSos(motivo) {
   if (sosTesteLig && $("sosTeste").style.display !== "flex") setTimeout(() => telaSosTeste(true, motivo), 0);
   if (!sosAtivo) ls.set("anjo.ultimoSos", JSON.stringify({ motivo: motivo || "", t: Date.now() }));
   if (!sosAtivo) { sosOffEscondido = false; ls.set("anjo.camAntesSos", frontal ? "frente" : "tras"); }   // C69: volta a ela no fim
+  ls.del("anjo.sosResetPendente");   // SOS novo: o reset antigo não vale mais
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
   discreto(true); estadoTela("normal");
   if (!ja) console.log("SOS:", motivo);
@@ -1894,7 +1898,8 @@ function telaSosTeste(lig, motivo) {
 $("btSosReset").onclick = () => {
   const motivo = ls.get("anjo.sosMotivo") || "";
   telaSosTeste(false);
-  enviar({ tipo: "sos_reset", motivo });
+  if (room && room.state === "connected" && ack && Date.now() - ackT < 5000) enviar({ tipo: "sos_reset", motivo });
+  else ls.set("anjo.sosResetPendente", motivo || "?");   // sem central agora: avisa quando ela voltar
   fimSos();
 };
 function rotuloSosTeste() { $("btSosTeste").textContent = "🧪 Teste do SOS (alarme e botão no celular): " + (sosTesteLig ? "ligado" : "desligado"); }
