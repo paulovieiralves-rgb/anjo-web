@@ -261,7 +261,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C80";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C81";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -1401,7 +1401,7 @@ async function entrarEspera() {
   const R = LivekitClient;
   espera = new R.Room({ adaptiveStream:false, dynacast:false });
   const avisar = () => {
-    espera?.localParticipant.publishData(cod.encode(JSON.stringify({ tipo:"espera" })),
+    espera?.localParticipant.publishData(cod.encode(JSON.stringify({ tipo:"espera", sos: sosAtivo, sos_teste: sosTesteLig })),
       { reliable:true, topic:"anjo", destinationIdentities:[CENTRAL] }).catch(() => {});
     // C80: reset do SOS feito no celular sem contato: vai também pela conexão de espera (página parada)
     let p = null; try { p = JSON.parse(ls.get("anjo.sosResetPendente") || "null"); } catch {}
