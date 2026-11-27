@@ -215,7 +215,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C63";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C64";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -540,7 +540,7 @@ function ligarSugestoes(input, caixa) {
               Object.assign(lugar, { lat: r.lat, lng: r.lng, localizado: true, nome: r.nome });
               el.querySelector("b").textContent = r.nome;
               el.querySelector("small").textContent = r.exato ? "✔ Número localizado · " + r.detalhe
-                : `⚠ O nº ${(t.match(/\b(\d{1,5})\b/) || [])[1]} não está cadastrado no mapa: posição aproximada na rua. Confira o ponto laranja ou use 📍 Marcar no mapa.`;
+                : `📍 Posição aproximada na rua (o nº ${(t.match(/\b(\d{1,5})\b/) || [])[1]} não tem cadastro no mapa). Se o ponto laranja estiver certo, toque em ✔ Usar; se não, arraste o mapa com 📍 Marcar no mapa.`;
             } catch (e) {
               el.querySelector("small").textContent = "⚠ Não localizei este endereço. Confira a grafia ou use 📍 Marcar no mapa.";
               return;
