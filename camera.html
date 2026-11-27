@@ -244,7 +244,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C67";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C68";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -261,10 +261,11 @@ let soPosicao = ls.get("anjo.soPosicao") === "1", ultimoAlerta = null, estadoAtu
 // C59: valores do movimento já sem a gravidade (1 g = 9,8 m/s² além do repouso). As 5 sacudidas (gatilho sozinho)
 // ficam sempre em ~1 g, para correr ou pular não disparar o SOS; a sensibilidade muda o tranco e o grito (que precisam de dupla)
 const SENSIB = {
-  baixa:  { tranco: 15, gritoDb: -14, gritoHz: 1000, gritoN: 4, sacode: 12, nome: "baixa" },
-  media:  { tranco: 10, gritoDb: -20, gritoHz: 850,  gritoN: 3, sacode: 10, nome: "média" },
-  alta:   { tranco: 7,  gritoDb: -26, gritoHz: 700,  gritoN: 2, sacode: 10, nome: "alta" },
-  maxima: { tranco: 5,  gritoDb: -32, gritoHz: 600,  gritoN: 1, sacode: 10, nome: "máxima" },
+  // C68: tranco 15% menos sensível (pedido do Paulo, 27/11): era 15/10/7/5
+  baixa:  { tranco: 17.3, gritoDb: -14, gritoHz: 1000, gritoN: 4, sacode: 12, nome: "baixa" },
+  media:  { tranco: 11.5, gritoDb: -20, gritoHz: 850,  gritoN: 3, sacode: 10, nome: "média" },
+  alta:   { tranco: 8.1, gritoDb: -26, gritoHz: 700,  gritoN: 2, sacode: 10, nome: "alta" },
+  maxima: { tranco: 5.8, gritoDb: -32, gritoHz: 600,  gritoN: 1, sacode: 10, nome: "máxima" },
 };
 let sensib = SENSIB[ls.get("anjo.sensib2")] || SENSIB.alta;   // padrão: alta (pedido do Paulo, 26/11)
 let picoG = 0, picoT = 0;
