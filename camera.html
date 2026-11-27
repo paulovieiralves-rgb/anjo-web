@@ -117,6 +117,10 @@
   #abas button.sel { color:#fff; }
   #telaEscura { position:fixed; inset:0; background:#000; z-index:3000; display:none; align-items:flex-end; justify-content:center;
     padding-bottom:calc(30px + env(safe-area-inset-bottom)); color:#334155; font-size:13px; }
+  #sosTeste { position:fixed; inset:0; z-index:3500; background:#7f1d1d; display:none; flex-direction:column; align-items:center;
+    justify-content:center; gap:16px; padding:24px; text-align:center; color:#fff; }
+  #sosTeste b { font-size:26px; } #sosTeste .motivo { font-size:16px; color:#fecaca; }
+  #sosTeste button { background:#16a34a; font-size:20px; padding:20px; border-radius:14px; width:100%; max-width:420px; }
   #sosOff { position:fixed; left:10px; right:10px; bottom:calc(12px + env(safe-area-inset-bottom)); z-index:2500; background:#450a0a;
     border:2px solid #ef4444; border-radius:14px; padding:12px; box-shadow:0 4px 20px #000c; }
   #sosOff a.botao { display:block; text-align:center; text-decoration:none; color:#fff; border-radius:10px; padding:14px; font-weight:700; margin-top:8px; background:#334155; }
@@ -142,6 +146,10 @@
   </header>
   <button id="btAtualizar" class="verde" style="display:none">⟳ Versão nova disponível — toque para atualizar</button>
   <div id="alerta"></div>
+  <!-- teste do SOS (27/11): alarme no celular + "Reconhecer e calar" -->
+  <div id="sosTeste"><b>🆘 SOS DISPARADO</b><div class="motivo" id="sosTesteMotivo"></div>
+    <div class="sub" style="color:#fecaca">Modo teste: a central também recebeu.</div>
+    <button id="btSosReset">✔ Reconhecer e calar (encerrar o SOS)</button></div>
   <div id="telaEscura">● toque para ver o mapa</div>
   <!-- C65: SOS sem contato com a central — o próprio assinante pede ajuda (WhatsApp/SMS/190) -->
   <div id="sosOff" style="display:none">
@@ -205,6 +213,7 @@
     <div class="cartao">
       <b>🆘 Pedir socorro</b>
       <button id="btSacudir">📳 SOS automático: ligado</button>
+      <button id="btSosTeste">🧪 Teste do SOS (alarme e botão no celular): ligado</button>
       <button id="btSensib">🎚 Sensibilidade: média</button>
       <div id="autoInfo" class="sub" style="margin-top:4px"></div>
       <input id="contatoSos" type="tel" inputmode="tel" autocomplete="off" placeholder="📱 Contato de emergência (WhatsApp, com DDD)">
@@ -244,7 +253,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C71";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C72";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -273,6 +282,7 @@ let picoG = 0, picoT = 0;
 let semCentral = false, passeioOff = null, streamLocal = null, abrindoMidia = false, gravLocal = null, enviandoFila = false,
     ultimaFila = 0, inicioT = 0, foraLocal = 0, foraAvisoT = 0, sosOffEscondido = false, offSalvoT = 0;
 const esperas = [];
+let sosTesteLig = ls.get("anjo.sosTeste") !== "0", alarmeSos = null;
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
 // C70: no Android (Galaxy) o sensor dá picos maiores e isolados: limites de movimento 30% mais altos e o pico
@@ -965,6 +975,7 @@ let sosAtivo = ls.get("anjo.sos") === "1", sosRep = null, sosOkT = 0;
 function marcaSos() { $("nome").textContent = par ? par.nome : "Câmera"; $("nome").style.color = ""; }   // em SOS, nenhuma marca no celular
 async function dispararSos(motivo) {
   const ja = sosAtivo;
+  if (sosTesteLig && $("sosTeste").style.display !== "flex") setTimeout(() => telaSosTeste(true, motivo), 0);
   if (!sosAtivo) ls.set("anjo.ultimoSos", JSON.stringify({ motivo: motivo || "", t: Date.now() }));
   if (!sosAtivo) { sosOffEscondido = false; ls.set("anjo.camAntesSos", frontal ? "frente" : "tras"); }   // C69: volta a ela no fim
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
@@ -979,6 +990,7 @@ async function dispararSos(motivo) {
   clearInterval(sosRep); sosRep = setInterval(avisar, 5000); avisar();
 }
 function fimSos() {
+  try { telaSosTeste(false); } catch {}
   discreto(false);
   if (soPosicao && room && room.localParticipant.isCameraEnabled) { ligarCamera(false); enviar({ tipo:"modo", so_posicao:true }); }
   if (ativo) { $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho"; }   // desfaz o "parado" de fachada
@@ -1852,6 +1864,42 @@ setInterval(() => {
 function rotuloEscura() { $("btEscura").textContent = "🌑 Tela escura transmitindo: " + (escuraLig ? "ligada" : "desligada"); }
 $("btEscura").onclick = () => { escuraLig = !escuraLig; ls.set("anjo.escura", escuraLig ? "1" : "0"); rotuloEscura(); };
 rotuloEscura();
+
+
+/* ---------- Teste do SOS (27/11, pedido do Paulo) ----------
+   Fase de testes: quando o SOS dispara, o celular toca um alarme, vibra e mostra o motivo, com o botão
+   "Reconhecer e calar", que encerra o SOS no celular e na central ({tipo:"sos_reset"}). Desligável em Ajustes.
+   Na operação real fica desligado: o SOS tem de ser discreto e só a central encerra. */
+function alarmeTeste(lig) {
+  clearInterval(alarmeSos); alarmeSos = null;
+  try { navigator.vibrate && navigator.vibrate(lig ? [400, 200, 400, 200, 400] : 0); } catch {}
+  if (!lig) return;
+  const bip = () => {
+    try {
+      prepararAudio(); if (!ctxAudio) return;
+      const t = ctxAudio.currentTime;
+      [0, 0.25].forEach(d => { const o = ctxAudio.createOscillator(), g = ctxAudio.createGain();
+        o.type = "square"; o.frequency.value = 1100; g.gain.value = 0.25; o.connect(g); g.connect(ctxAudio.destination);
+        o.start(t + d); o.stop(t + d + 0.18); });
+      navigator.vibrate && navigator.vibrate([300, 150, 300]);
+    } catch {}
+  };
+  bip(); alarmeSos = setInterval(bip, 1500);
+}
+function telaSosTeste(lig, motivo) {
+  $("sosTeste").style.display = lig ? "flex" : "none";
+  if (lig) $("sosTesteMotivo").textContent = "Motivo: " + (motivo || "—") + " · " + new Date().toLocaleTimeString("pt-BR");
+  alarmeTeste(lig);
+}
+$("btSosReset").onclick = () => {
+  const motivo = ls.get("anjo.sosMotivo") || "";
+  telaSosTeste(false);
+  enviar({ tipo: "sos_reset", motivo });
+  fimSos();
+};
+function rotuloSosTeste() { $("btSosTeste").textContent = "🧪 Teste do SOS (alarme e botão no celular): " + (sosTesteLig ? "ligado" : "desligado"); }
+$("btSosTeste").onclick = () => { sosTesteLig = !sosTesteLig; ls.set("anjo.sosTeste", sosTesteLig ? "1" : "0"); rotuloSosTeste(); };
+rotuloSosTeste();
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
