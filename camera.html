@@ -244,7 +244,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C70";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C71";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -937,7 +937,7 @@ async function iniciar(silencioso = false) {
   hb = setInterval(() => enviar({ tipo:"hb" }, false), 1000);
   if (navigator.geolocation) gpsWatch = navigator.geolocation.watchPosition(p => {
     if (p.coords.accuracy > 35) return;
-    velocidade = Math.max(0, p.coords.speed || 0); registrarVelocidade(velocidade);
+    velocidade = Math.max(0, p.coords.speed || 0); registrarVelocidade(velocidade, p.coords.accuracy);
     const g = { tipo:"gps", lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy, v:velocidade, t:p.timestamp };
     enviar(g); if (semCentral) verificarRotaLocal(g.lat, g.lng); posicaoNoMapa(g.lat, g.lng); chegou(g.lat, g.lng); if (!sosAtivo) somarPercurso(g.lat, g.lng); $("gpsInfo").textContent = `GPS ±${Math.round(g.acc)} m · ${(velocidade * 3.6).toFixed(0)} km/h ·`;
   }, () => {}, { enableHighAccuracy:true, maximumAge:0 });
@@ -965,6 +965,7 @@ let sosAtivo = ls.get("anjo.sos") === "1", sosRep = null, sosOkT = 0;
 function marcaSos() { $("nome").textContent = par ? par.nome : "Câmera"; $("nome").style.color = ""; }   // em SOS, nenhuma marca no celular
 async function dispararSos(motivo) {
   const ja = sosAtivo;
+  if (!sosAtivo) ls.set("anjo.ultimoSos", JSON.stringify({ motivo: motivo || "", t: Date.now() }));
   if (!sosAtivo) { sosOffEscondido = false; ls.set("anjo.camAntesSos", frontal ? "frente" : "tras"); }   // C69: volta a ela no fim
   sosAtivo = true; ls.set("anjo.sos", "1"); ls.set("anjo.sosMotivo", motivo || "");
   discreto(true); estadoTela("normal");
@@ -1240,7 +1241,9 @@ function registrarTranco(g, agora) {
   const antes = velHist.filter(x => agora - x.t < 10000).map(x => x.v);
   velAntes = antes.length ? antes.reduce((a, b) => a + b, 0) / antes.length : 0;
 }
-function registrarVelocidade(v) { const t = Date.now(); velHist.push({ t, v: Math.max(0, v || 0) }); velHist = velHist.filter(x => t - x.t < 30000); }
+function registrarVelocidade(v, acc) {
+  if (acc > 25) return;   // C71: GPS ruim (celular entrando no bolso) dá velocidades falsas
+  const t = Date.now(); velHist.push({ t, v: Math.max(0, v || 0) }); velHist = velHist.filter(x => t - x.t < 30000); }
 function prepararAudio() {      // iPhone: o áudio da página só liga dentro de um toque
   try { if (!ctxAudio) ctxAudio = new (window.AudioContext || window.webkitAudioContext)(); ctxAudio.resume(); } catch {}
 }
@@ -1282,20 +1285,23 @@ setInterval(() => {               // combinações que disparam o SOS
     if (ultimoTranco && ultimoGrito && agora - ultimoTranco < 6000 && Math.abs(ultimoGrito - ultimoTranco) < 5000) {
       ultimoTranco = ultimoGrito = 0; dispararSos("automático: grito + tranco");
     } else if (ultimoTranco && agora - ultimoTranco < 12000 && velAntes < 2) {
-      const depois = velHist.filter(x => x.t > ultimoTranco).map(x => x.v);
-      if (depois.some(v => v > 3.5)) { ultimoTranco = 0; dispararSos("automático: tranco + fuga"); }
+      // C71: fuga de verdade = correr de forma contínua: 3 leituras > 3,5 m/s espalhadas por 3 s ou mais
+      // (uma leitura isolada do GPS ao guardar o celular no bolso disparava)
+      const rapidas = velHist.filter(x => x.t > ultimoTranco && x.v > 3.5);
+      if (rapidas.length >= 3 && rapidas[rapidas.length - 1].t - rapidas[0].t >= 3000) { ultimoTranco = 0; dispararSos("automático: tranco + fuga"); }
     }
   }
   if (sosAtivo || !sacudir) { $("autoInfo").textContent = ""; return; }
   const ha = t => t ? `há ${Math.round((agora - t) / 1000)} s` : "—";
   $("autoInfo").textContent = `Teste: movimento agora ${(picoG / 9.81).toFixed(1).replace(".", ",")} g (tranco a partir de ${(LIM_TRANCO / 9.81).toFixed(1).replace(".", ",")} g) · tranco ${ultimoTranco ? trancoG.toFixed(1).replace(".", ",") + " g " + ha(ultimoTranco) : "—"} · `
     + (ativo && analisador ? `som ${Math.round(maxDb)} dB (grito a partir de ${LIM_GRITO_DB} dB, ${planura < 0.25 ? "com tom" : "chiado"})${agora - ultimoGrito < 6000 ? " · grito ✓" : ""}` : "grito: só transmitindo")
-    + ` · ${(velHist.length ? velHist[velHist.length - 1].v * 3.6 : 0).toFixed(0)} km/h`;
+    + ` · ${(velHist.length ? velHist[velHist.length - 1].v * 3.6 : 0).toFixed(0)} km/h`
+    + (() => { try { const u = JSON.parse(ls.get("anjo.ultimoSos") || "null"); return u ? ` · último SOS: ${u.motivo} às ${new Date(u.t).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : ""; } catch { return ""; } })();
 }, 500);
 // parado: GPS leve só para perceber a fuga (transmitindo, o GPS da transmissão faz isso)
 function vigiarGps(lig) {
   if (lig && gpsVigia === null && navigator.geolocation && sacudir && par)
-    gpsVigia = navigator.geolocation.watchPosition(p => registrarVelocidade(p.coords.speed), () => {}, { enableHighAccuracy: true, maximumAge: 2000 });
+    gpsVigia = navigator.geolocation.watchPosition(p => registrarVelocidade(p.coords.speed, p.coords.accuracy), () => {}, { enableHighAccuracy: true, maximumAge: 2000 });
   else if (!lig && gpsVigia !== null) { navigator.geolocation.clearWatch(gpsVigia); gpsVigia = null; }
 }
 setTimeout(() => { if (!ativo) vigiarGps(true); }, 2000);
