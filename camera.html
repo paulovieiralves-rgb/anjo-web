@@ -121,6 +121,8 @@
     justify-content:center; gap:16px; padding:24px; text-align:center; color:#fff; }
   #sosTeste b { font-size:26px; } #sosTeste .motivo { font-size:16px; color:#fecaca; }
   #sosTeste button { background:#16a34a; font-size:20px; padding:20px; border-radius:14px; width:100%; max-width:420px; }
+  .regua { display:block; margin-top:10px; font-size:14px; }
+  .regua input[type=range] { width:100%; height:36px; margin-top:4px; accent-color:#22c55e; }
   #sosOff { position:fixed; left:10px; right:10px; bottom:calc(12px + env(safe-area-inset-bottom)); z-index:2500; background:#450a0a;
     border:2px solid #ef4444; border-radius:14px; padding:12px; box-shadow:0 4px 20px #000c; }
   #sosOff a.botao { display:block; text-align:center; text-decoration:none; color:#fff; border-radius:10px; padding:14px; font-weight:700; margin-top:8px; background:#334155; }
@@ -229,6 +231,9 @@
         </div>
         <button id="btOuvir" class="ouvir">Ouvindo</button>
         <div id="ouvirInfo" class="sub"></div>
+        <label class="regua">🎙 Sensibilidade da senha falada: <b id="vozSensibTxt">5</b>/10
+          <input id="vozSensib" type="range" min="1" max="10" step="1" value="5"></label>
+        <div class="sub">Puxe para a direita se a central não ouvir o seu grito; para a esquerda se disparar à toa. Vale transmitindo (quem ouve é a central).</div>
       </div>
       <details class="nota"><summary>Como pedir socorro sem abrir a tela (iPhone)</summary>
         <p>Em caso de roubo ou assalto, o celular avisa a central, liga câmera, microfone e GPS e a central passa a seguir
@@ -254,7 +259,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C76";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C77";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -927,6 +932,7 @@ async function conectarUmaVez() {
     if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
     enviar({ tipo:"modo", so_posicao: soPosicao && !sosAtivo });
     enviar({ tipo:"ouvir", ligado: ouvirLocal });
+    enviar({ tipo:"voz_sensib", nivel: +(ls.get("anjo.vozSensib") || 5) });
     const mic = room.localParticipant.getTrackPublication(R.Track.Source.Microphone);
     ligarGrito(mic && mic.audioTrack && mic.audioTrack.mediaStreamTrack);
     enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
@@ -1921,6 +1927,13 @@ rotuloSosTeste();
 function rotuloSosAuto() { $("btSosAuto").textContent = "🤖 SOS automático (grito/tranco/fuga): " + (sosAutoLig ? "ligado" : "desligado"); }
 $("btSosAuto").onclick = () => { sosAutoLig = !sosAutoLig; ls.set("anjo.sosAuto2", sosAutoLig ? "1" : "0"); rotuloSosAuto(); };
 rotuloSosAuto();
+// C77: régua da sensibilidade da senha falada (1 a 10; 5 = padrão). A central aplica ao seu reconhecedor.
+(() => {
+  const r = $("vozSensib"), v = +(ls.get("anjo.vozSensib") || 5);
+  r.value = v; $("vozSensibTxt").textContent = v;
+  r.addEventListener("input", () => { $("vozSensibTxt").textContent = r.value; });
+  r.addEventListener("change", () => { ls.set("anjo.vozSensib", r.value); enviar({ tipo: "voz_sensib", nivel: +r.value }); });
+})();
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
