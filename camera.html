@@ -259,7 +259,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C77";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C78";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -297,6 +297,7 @@ function enviarResetPendente() {
   resetEnviadoT = Date.now(); enviar({ tipo: "sos_reset", motivo: p.motivo });
 }
 let sosAutoLig = ls.get("anjo.sosAuto2") === "1";   // C75: SOS automático (grito/tranco/fuga) desligado por padrão (pedido do Paulo, 27/11)
+let silencioMic = 0, ultimoReparoMic = 0;
 let sosTesteLig = ls.get("anjo.sosTeste") !== "0", alarmeSos = null;
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
@@ -1012,6 +1013,7 @@ async function dispararSos(motivo) {
 }
 function fimSos() {
   try { telaSosTeste(false); } catch {}
+  try { enviar({ tipo: "gravar", ligar: !!gravar }); } catch {}   // C78: fim do SOS → a central só continua gravando se ⏺ Gravar estava ligado
   discreto(false);
   if (soPosicao && room && room.localParticipant.isCameraEnabled) { ligarCamera(false); enviar({ tipo:"modo", so_posicao:true }); }
   if (ativo) { $("btIniciar").textContent = "■ Parar transmissão"; $("btIniciar").className = "vermelho"; }   // desfaz o "parado" de fachada
@@ -1280,6 +1282,17 @@ function registrarVelocidade(v, acc) {
 function prepararAudio() {      // iPhone: o áudio da página só liga dentro de um toque
   try { if (!ctxAudio) ctxAudio = new (window.AudioContext || window.webkitAudioContext)(); ctxAudio.resume(); } catch {}
 }
+async function repararMic() {
+  try {
+    console.log("microfone mudo: religando");
+    try { pararEscutaLocal(); } catch {}
+    await room.localParticipant.setMicrophoneEnabled(false);
+    await new Promise(r => setTimeout(r, 400));
+    await room.localParticipant.setMicrophoneEnabled(true);
+    const mic = room.localParticipant.getTrackPublication(LivekitClient.Track.Source.Microphone);
+    ligarGrito(mic && mic.audioTrack && mic.audioTrack.mediaStreamTrack);
+  } catch (e) { console.log("reparar microfone", e); }
+}
 function ligarGrito(mediaTrack) {
   try {
     if (!mediaTrack) return;
@@ -1314,6 +1327,15 @@ setInterval(() => {               // análise do som a cada 100 ms
 }, 100);
 setInterval(() => {               // combinações que disparam o SOS
   const agora = Date.now();
+  // C78: microfone "mudo" (−100 dB ou menos, silêncio digital): no Android acontece quando o reconhecimento de voz
+  // do navegador ainda segura o microfone ao começar a transmissão. A central fica sem áudio e a senha falada não
+  // funciona. Depois de 8 s assim, desliga e religa o microfone da transmissão (no máximo a cada 30 s).
+  if (ativo && room && room.state === "connected" && analisador) {
+    if (maxDb > -95) silencioMic = 0; else if (!silencioMic) silencioMic = agora;
+    if (silencioMic && agora - silencioMic > 8000 && agora - ultimoReparoMic > 30000) {
+      ultimoReparoMic = agora; silencioMic = 0; repararMic();
+    }
+  } else silencioMic = 0;
   if (sacudir && !sosAtivo && par) {
     if (!sosAutoLig) { /* automático desligado: só sacudir e senha falada */ }
     else if (ultimoTranco && ultimoGrito && agora - ultimoTranco < 6000 && Math.abs(ultimoGrito - ultimoTranco) < 5000) {
