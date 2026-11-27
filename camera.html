@@ -192,6 +192,8 @@
       <div class="tecnico"><span id="gpsInfo"></span> <span id="cont"></span></div>
       <button id="btEscura">🌑 Tela escura transmitindo: ligada</button>
       <div class="sub">Transmitindo, a tela fica preta depois de 30 s sem toque (discreto e gasta menos bateria); a transmissão continua. Um toque volta.</div>
+      <button id="btPlacas">🔢 Modo placas (imagem em alta, 1080p): desligado</button>
+      <div class="sub">Para testar a leitura de placas: imagem com o dobro de detalhe. Gasta mais internet (~2,5 Mbps), bateria e processador do notebook.</div>
       <button id="btNovoPasseio">🧹 Novo passeio (limpa o mapa)</button>
     </div>
     <div class="cartao" id="cartaoSemCentral">
@@ -259,7 +261,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C78";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C79";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -298,6 +300,10 @@ function enviarResetPendente() {
 }
 let sosAutoLig = ls.get("anjo.sosAuto2") === "1";   // C75: SOS automático (grito/tranco/fuga) desligado por padrão (pedido do Paulo, 27/11)
 let silencioMic = 0, ultimoReparoMic = 0;
+// C79: modo placas — 1080p e ~2,5 Mbps (placa com o dobro de pixels); a central lê placas 4×/s em vez de 2×/s
+let modoPlacas = ls.get("anjo.placasModo") === "1";
+const resolucao = () => (modoPlacas ? LivekitClient.VideoPresets.h1080 : LivekitClient.VideoPresets.h540).resolution;
+const codificacao = () => ({ maxBitrate: modoPlacas ? 2500000 : 900000, maxFramerate: 15 });
 let sosTesteLig = ls.get("anjo.sosTeste") !== "0", alarmeSos = null;
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
@@ -886,10 +892,10 @@ async function conectarUmaVez() {
   const R = LivekitClient;
   if (room) { const velho = room; room = null; try { velho.removeAllListeners(); await velho.disconnect(); } catch {} }
   const este = new R.Room({ adaptiveStream:false, dynacast:false,
-    videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution },
+    videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: resolucao() },
     // C76: sem supressão de ruído no microfone: no Android ela "come" o grito e o começo das palavras da senha falada
     audioCaptureDefaults: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
-    publishDefaults: { simulcast:false, videoEncoding: { maxBitrate: 900000, maxFramerate: 15 } } });
+    publishDefaults: { simulcast:false, videoEncoding: codificacao() } });
   room = este;
   room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar: gravar || sosAtivo }))
       .on(R.RoomEvent.ParticipantConnected, p => { if (p.identity === CENTRAL) { enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota(); } })
@@ -934,6 +940,7 @@ async function conectarUmaVez() {
     enviar({ tipo:"modo", so_posicao: soPosicao && !sosAtivo });
     enviar({ tipo:"ouvir", ligado: ouvirLocal });
     enviar({ tipo:"voz_sensib", nivel: +(ls.get("anjo.vozSensib") || 5) });
+    enviar({ tipo:"placas_modo", ligado: modoPlacas });
     const mic = room.localParticipant.getTrackPublication(R.Track.Source.Microphone);
     ligarGrito(mic && mic.audioTrack && mic.audioTrack.mediaStreamTrack);
     enviar({ tipo:"gravar", ligar: gravar || sosAtivo }); enviarRota();
@@ -1643,7 +1650,7 @@ function desenharHistorico() {
 async function ligarCamera(lig) {
   if (!room || room.state !== "connected") { if (streamLocal) { fecharMidiaLocal(); abrirMidiaLocal(); } return; }
   try {
-    await room.localParticipant.setCameraEnabled(lig, lig ? { facingMode: frontal ? "user" : "environment", resolution: LivekitClient.VideoPresets.h540.resolution } : undefined);
+    await room.localParticipant.setCameraEnabled(lig, lig ? { facingMode: frontal ? "user" : "environment", resolution: resolucao() } : undefined, lig ? { simulcast: false, videoEncoding: codificacao() } : undefined);
     const p = room.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
     if (lig && p && p.videoTrack) p.videoTrack.attach($("video"));
   } catch (e) { console.log("camera", e); }
@@ -1949,6 +1956,22 @@ rotuloSosTeste();
 function rotuloSosAuto() { $("btSosAuto").textContent = "🤖 SOS automático (grito/tranco/fuga): " + (sosAutoLig ? "ligado" : "desligado"); }
 $("btSosAuto").onclick = () => { sosAutoLig = !sosAutoLig; ls.set("anjo.sosAuto2", sosAutoLig ? "1" : "0"); rotuloSosAuto(); };
 rotuloSosAuto();
+function rotuloPlacas() { $("btPlacas").textContent = "🔢 Modo placas (imagem em alta, 1080p): " + (modoPlacas ? "ligado" : "desligado"); }
+$("btPlacas").onclick = async () => {
+  modoPlacas = !modoPlacas; ls.set("anjo.placasModo", modoPlacas ? "1" : "0"); rotuloPlacas();
+  enviar({ tipo: "placas_modo", ligado: modoPlacas });
+  // transmitindo com câmera: republica a câmera na nova resolução
+  if (room && room.state === "connected" && room.localParticipant.isCameraEnabled) {
+    try {
+      await room.localParticipant.setCameraEnabled(false);
+      await room.localParticipant.setCameraEnabled(true, { facingMode: frontal ? "user" : "environment", resolution: resolucao() },
+                                                   { simulcast: false, videoEncoding: codificacao() });
+      const pub = room.localParticipant.getTrackPublication(LivekitClient.Track.Source.Camera);
+      if (pub && pub.videoTrack) pub.videoTrack.attach($("video"));
+    } catch (e) { console.log("modo placas", e); }
+  }
+};
+rotuloPlacas();
 // C77: régua da sensibilidade da senha falada (1 a 10; 5 = padrão). A central aplica ao seu reconhecedor.
 (() => {
   const r = $("vozSensib"), v = +(ls.get("anjo.vozSensib") || 5);
@@ -1972,7 +1995,7 @@ async function trocarCamera(paraFrontal) {
     console.log(e);
     try {
       await room.localParticipant.setCameraEnabled(false);
-      await room.localParticipant.setCameraEnabled(true, { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution });
+      await room.localParticipant.setCameraEnabled(true, { facingMode: frontal ? "user" : "environment", resolution: resolucao() }, { simulcast: false, videoEncoding: codificacao() });
       const p2 = room.localParticipant.getTrackPublication(R.Track.Source.Camera);
       if (p2 && p2.videoTrack) p2.videoTrack.attach($("video"));
     } catch (e2) { console.log(e2); }
