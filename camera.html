@@ -213,6 +213,7 @@
     <div class="cartao">
       <b>🆘 Pedir socorro</b>
       <button id="btSacudir">📳 SOS automático: ligado</button>
+      <button id="btSosAuto">🤖 SOS automático (grito/tranco/fuga): desligado</button>
       <button id="btSosTeste">🧪 Teste do SOS (alarme e botão no celular): ligado</button>
       <button id="btSensib">🎚 Sensibilidade: média</button>
       <div id="autoInfo" class="sub" style="margin-top:4px"></div>
@@ -253,7 +254,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C74";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C75";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -290,6 +291,7 @@ function enviarResetPendente() {
   if (!room || room.state !== "connected" || Date.now() - resetEnviadoT < 3000) return;
   resetEnviadoT = Date.now(); enviar({ tipo: "sos_reset", motivo: p.motivo });
 }
+let sosAutoLig = ls.get("anjo.sosAuto2") === "1";   // C75: SOS automático (grito/tranco/fuga) desligado por padrão (pedido do Paulo, 27/11)
 let sosTesteLig = ls.get("anjo.sosTeste") !== "0", alarmeSos = null;
 // C67: tela escura na transmissão normal (como se estivesse em segundo plano)
 let escuraLig = ls.get("anjo.escura") !== "0", toqueTela = Date.now();
@@ -1305,7 +1307,8 @@ setInterval(() => {               // análise do som a cada 100 ms
 setInterval(() => {               // combinações que disparam o SOS
   const agora = Date.now();
   if (sacudir && !sosAtivo && par) {
-    if (ultimoTranco && ultimoGrito && agora - ultimoTranco < 6000 && Math.abs(ultimoGrito - ultimoTranco) < 5000) {
+    if (!sosAutoLig) { /* automático desligado: só sacudir e senha falada */ }
+    else if (ultimoTranco && ultimoGrito && agora - ultimoTranco < 6000 && Math.abs(ultimoGrito - ultimoTranco) < 5000) {
       ultimoTranco = ultimoGrito = 0; dispararSos("automático: grito + tranco");
     } else if (ultimoTranco && agora - ultimoTranco < 12000 && velAntes < 2) {
       // C71: fuga de verdade = correr de forma contínua: 3 leituras > 3,5 m/s espalhadas por 3 s ou mais
@@ -1913,6 +1916,9 @@ $("btSosReset").onclick = () => {
 function rotuloSosTeste() { $("btSosTeste").textContent = "🧪 Teste do SOS (alarme e botão no celular): " + (sosTesteLig ? "ligado" : "desligado"); }
 $("btSosTeste").onclick = () => { sosTesteLig = !sosTesteLig; ls.set("anjo.sosTeste", sosTesteLig ? "1" : "0"); rotuloSosTeste(); };
 rotuloSosTeste();
+function rotuloSosAuto() { $("btSosAuto").textContent = "🤖 SOS automático (grito/tranco/fuga): " + (sosAutoLig ? "ligado" : "desligado"); }
+$("btSosAuto").onclick = () => { sosAutoLig = !sosAutoLig; ls.set("anjo.sosAuto2", sosAutoLig ? "1" : "0"); rotuloSosAuto(); };
+rotuloSosAuto();
 
 /* ---------- botões ---------- */
 $("btIniciar").onclick = async () => {
