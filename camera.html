@@ -254,7 +254,7 @@
 </div>
 
 <script>
-const VERSAO_PAGINA = "C75";   // ao publicar mudança, aumentar aqui E em camera_versao.json
+const VERSAO_PAGINA = "C76";   // ao publicar mudança, aumentar aqui E em camera_versao.json
 window.addEventListener("error", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ Erro na página: " + e.message; });
 window.addEventListener("unhandledrejection", e => { const el = document.getElementById("rotaInfo"); if (el) el.textContent = "⚠ " + (e.reason && e.reason.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -881,6 +881,8 @@ async function conectarUmaVez() {
   if (room) { const velho = room; room = null; try { velho.removeAllListeners(); await velho.disconnect(); } catch {} }
   const este = new R.Room({ adaptiveStream:false, dynacast:false,
     videoCaptureDefaults: { facingMode: frontal ? "user" : "environment", resolution: R.VideoPresets.h540.resolution },
+    // C76: sem supressão de ruído no microfone: no Android ela "come" o grito e o começo das palavras da senha falada
+    audioCaptureDefaults: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
     publishDefaults: { simulcast:false, videoEncoding: { maxBitrate: 900000, maxFramerate: 15 } } });
   room = este;
   room.on(R.RoomEvent.Reconnected, () => enviar({ tipo:"gravar", ligar: gravar || sosAtivo }))
